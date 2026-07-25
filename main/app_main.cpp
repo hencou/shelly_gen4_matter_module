@@ -27,6 +27,7 @@ extern "C" {
 #include "ota.h"
 #include "status_led.h"
 #include "script_engine.h"
+#include "web_api.h"
 }
 
 #include "matter_device.h"
@@ -198,6 +199,13 @@ extern "C" void app_main(void)
     if (commissioned) {
         matter_thread_watchdog_start();
         ESP_LOGI(TAG, "BOOT-STEP: Thread connectivity watchdog started");
+
+        /* Spike: expose the management page over IPv6/Thread (no WiFi needed)
+         * and log the Thread IPv6 addresses so it can be reached from a browser.
+         * Only meaningful with a border router present (OMR address). */
+        web_api_start_httpd();
+        matter_thread_addr_log_start();
+        ESP_LOGI(TAG, "BOOT-STEP: management httpd started over Thread (IPv6)");
     }
 
     // =========================================================================
