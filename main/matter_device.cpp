@@ -55,6 +55,9 @@ extern "C" {
 #include <openthread/instance.h>
 #include <openthread/thread.h>
 #include <openthread/ip6.h>
+#if CONFIG_OPENTHREAD_SRP_CLIENT
+#include <openthread/srp_client.h>
+#endif
 #if CONFIG_OPENTHREAD_BORDER_ROUTER
 #include <openthread/srp_server.h>
 #include <openthread/netdata.h>
@@ -770,11 +773,53 @@ extern "C" void matter_log_thread_addrs(void)
     chip::DeviceLayer::ThreadStackMgr().UnlockThreadStack();
 }
 
+#if CONFIG_OPENTHREAD_SRP_CLIENT
+/* Register the management page as an _http._tcp SRP service so a border router's
+ * advertising proxy republishes it as LAN mDNS (http://<host>.local/). Reuses
+ * the SRP host Matter already set up; retries until that host name exists. */
+static bool               s_srp_http_registered = false;
+static char               s_srp_http_instance[64];  /* one DNS label (<=63 + NUL) */
+static otSrpClientService s_srp_http_service;
+
+extern "C" void matter_srp_advertise_httpd(void)
+{
+    if (s_srp_http_registered) return;
+
+    chip::DeviceLayer::ThreadStackMgr().LockThreadStack();
+    otInstance *instance = esp_openthread_get_instance();
+    if (instance) {
+        const otSrpClientHostInfo *host = otSrpClientGetHostInfo(instance);
+        if (host && host->mName) {
+            snprintf(s_srp_http_instance, sizeof(s_srp_http_instance), "%s", host->mName);
+
+            memset(&s_srp_http_service, 0, sizeof(s_srp_http_service));
+            s_srp_http_service.mName         = "_http._tcp";
+            s_srp_http_service.mInstanceName = s_srp_http_instance;
+            s_srp_http_service.mPort         = 80;
+
+            otError err = otSrpClientAddService(instance, &s_srp_http_service);
+            if (err == OT_ERROR_NONE || err == OT_ERROR_ALREADY) {
+                s_srp_http_registered = true;
+                ESP_LOGW(TAG, "SRP: advertising _http._tcp for %s.local:80 "
+                              "-- open http://%s.local/ from the LAN "
+                              "(needs a border router advertising proxy)",
+                         host->mName, host->mName);
+            } else {
+                ESP_LOGW(TAG, "SRP: _http._tcp registration failed (%d), will retry", err);
+            }
+        }
+    }
+    chip::DeviceLayer::ThreadStackMgr().UnlockThreadStack();
+}
+#else
+extern "C" void matter_srp_advertise_httpd(void) {}
+#endif
+
 extern "C" void matter_thread_addr_log_start(void)
 {
     if (s_addr_log_timer) return;
     const esp_timer_create_args_t args = {
-        .callback = [](void *) { matter_log_thread_addrs(); },
+        .callback = [](void *) { matter_log_thread_addrs(); matter_srp_advertise_httpd(); },
         .arg = nullptr,
         .dispatch_method = ESP_TIMER_TASK,
         .name = "addr_log",
@@ -784,11 +829,13 @@ extern "C" void matter_thread_addr_log_start(void)
         esp_timer_start_periodic(s_addr_log_timer, 15 * 1000 * 1000);  /* 15 s */
         ESP_LOGI(TAG, "Thread IPv6 address logger started (every 15 s)");
     }
-    matter_log_thread_addrs();  /* also log immediately */
+    matter_log_thread_addrs();     /* also log immediately */
+    matter_srp_advertise_httpd();  /* register _http._tcp once host name is set */
 }
 #else
 extern "C" void matter_log_thread_addrs(void) {}
 extern "C" void matter_thread_addr_log_start(void) {}
+extern "C" void matter_srp_advertise_httpd(void) {}
 #endif
 
 extern "C" void matter_factory_reset(void)

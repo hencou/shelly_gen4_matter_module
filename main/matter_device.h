@@ -78,6 +78,13 @@ esp_err_t matter_srp_server_start(void);
 void matter_log_thread_addrs(void);
 void matter_thread_addr_log_start(void);
 
+/* Advertise the management page as an _http._tcp service via the OpenThread SRP
+ * client, reusing the SRP host Matter already registered. A border router's
+ * advertising proxy republishes it as mDNS on the LAN, so the page becomes
+ * reachable at http://<host>.local/. Idempotent; safe to call repeatedly until
+ * the SRP host name is available. */
+void matter_srp_advertise_httpd(void);
+
 /* Factory reset → wipes Matter NVS, leaves the fabric, reboot. */
 void matter_factory_reset(void);
 
