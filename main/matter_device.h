@@ -71,6 +71,13 @@ void matter_thread_watchdog_start(void);
  * would otherwise hide the whole mesh from off-mesh controllers. */
 esp_err_t matter_srp_server_start(void);
 
+/* Spike: log the device's Thread unicast IPv6 addresses (OMR / mesh-local /
+ * link-local) so the management page can be reached over IPv6/Thread from a
+ * browser. matter_thread_addr_log_start() also re-logs every 15 s (the OMR
+ * address only appears once a border router hands out its prefix). */
+void matter_log_thread_addrs(void);
+void matter_thread_addr_log_start(void);
+
 /* Factory reset → wipes Matter NVS, leaves the fabric, reboot. */
 void matter_factory_reset(void);
 
