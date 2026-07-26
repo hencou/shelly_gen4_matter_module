@@ -306,6 +306,15 @@ Press the button → the lamp should respond directly, **without HA in the path*
 4. The device downloads and flashes the new firmware, then reboots.
 5. For subsequent OTA updates: 6× press suffices — WiFi credentials are saved in NVS.
 
+> **Stock Shelly loader compatibility:** these units keep the proprietary
+> Shelly OS bootloader, which selects the boot slot from its own `SH0S`
+> boot-select record and ignores the standard ESP-IDF otadata. After a
+> successful upload the firmware writes a valid `SH0S` record pointing at the
+> freshly flashed slot, so the stock loader boots the new image while the
+> stock bootloader and the option to return to stock firmware are preserved.
+> The new record is written to the inactive boot-select copy, so the previous
+> image remains bootable if power is lost mid-update.
+
 ## 11. Rollback to stock Shelly firmware
 
 ```bash
