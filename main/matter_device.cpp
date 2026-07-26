@@ -790,7 +790,11 @@ extern "C" void matter_srp_advertise_httpd(void)
     if (instance) {
         const otSrpClientHostInfo *host = otSrpClientGetHostInfo(instance);
         if (host && host->mName) {
-            snprintf(s_srp_http_instance, sizeof(s_srp_http_instance), "%s", host->mName);
+            /* Instance label = the user-configurable hostname (Hardware page),
+             * so the service shows up as e.g. "shelly-woonkamer" when browsing
+             * _http._tcp. The SRV target stays the SRP host Matter registered,
+             * so it still resolves to the device's Thread address(es). */
+            snprintf(s_srp_http_instance, sizeof(s_srp_http_instance), "%s", ota_hostname_get());
 
             memset(&s_srp_http_service, 0, sizeof(s_srp_http_service));
             s_srp_http_service.mName         = "_http._tcp";
@@ -800,10 +804,10 @@ extern "C" void matter_srp_advertise_httpd(void)
             otError err = otSrpClientAddService(instance, &s_srp_http_service);
             if (err == OT_ERROR_NONE || err == OT_ERROR_ALREADY) {
                 s_srp_http_registered = true;
-                ESP_LOGW(TAG, "SRP: advertising _http._tcp for %s.local:80 "
-                              "-- open http://%s.local/ from the LAN "
-                              "(needs a border router advertising proxy)",
-                         host->mName, host->mName);
+                ESP_LOGW(TAG, "SRP: advertising _http._tcp '%s' -> %s.local:80 "
+                              "(browse _http._tcp, or open http://%s.local/ from the LAN; "
+                              "needs a border router advertising proxy)",
+                         s_srp_http_instance, host->mName, host->mName);
             } else {
                 ESP_LOGW(TAG, "SRP: _http._tcp registration failed (%d), will retry", err);
             }
