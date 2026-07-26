@@ -504,12 +504,12 @@ extern "C" void matter_update_occupancy(bool occupied)
 extern "C" void matter_update_boolean_state(uint16_t endpoint_id, bool state)
 {
     if (!endpoint_id) return;
-    /* Use the generated CHIP accessor (same path as Occupancy/Temperature). The
-     * esp-matter attribute::update() path returns ESP_ERR_NOT_SUPPORTED (262) for
-     * this attribute; the accessor writes the ZAP attribute store directly. */
-    chip::DeviceLayer::PlatformMgr().LockChipStack();
-    BooleanState::Attributes::StateValue::Set(endpoint_id, state);
-    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+    /* The BooleanState endpoint is built as a plain ember-stored cluster (see
+     * SLOT_TYPE_CONTACT), so the esp-matter attribute store update path works and
+     * locks the stack internally. */
+    esp_matter_attr_val_t v = esp_matter_bool(state);
+    attribute::update(endpoint_id, BooleanState::Id,
+                      BooleanState::Attributes::StateValue::Id, &v);
 }
 
 extern "C" void matter_update_power_ch(int ch, float voltage_v, float current_a,
@@ -1006,8 +1006,23 @@ static endpoint_t *create_endpoint_for_type(node_t *node, script_slot_type_t typ
         return on_off_light::create(node, &cfg, ENDPOINT_FLAG_NONE, NULL);
     }
     case SLOT_TYPE_CONTACT: {
-        contact_sensor::config_t cfg;
-        return contact_sensor::create(node, &cfg, ENDPOINT_FLAG_NONE, NULL);
+        /* Build the Contact Sensor the same way as Occupancy: a plain ember-stored
+         * BooleanState cluster. The contact_sensor::create() helper registers a
+         * code-driven BooleanState server whose StateValue is "managed internally",
+         * which makes attribute::update() fail with ESP_ERR_NOT_SUPPORTED (262).
+         * Creating the cluster generically keeps StateValue writable via the
+         * esp-matter attribute store. */
+        endpoint_t *ep = esp_matter::endpoint::create(node, ENDPOINT_FLAG_NONE, NULL);
+        if (!ep) return NULL;
+        descriptor::config_t desc_cfg;
+        descriptor::create(ep, &desc_cfg, CLUSTER_FLAG_SERVER);
+        esp_matter::endpoint::add_device_type(ep, 0x0015 /* Contact Sensor */, 1);
+        cluster_t *cl = esp_matter::cluster::create(ep, BooleanState::Id, CLUSTER_FLAG_SERVER);
+        global::attribute::create_cluster_revision(cl, 1);
+        global::attribute::create_feature_map(cl, 0);
+        esp_matter::attribute::create(cl, BooleanState::Attributes::StateValue::Id,
+                                      ATTRIBUTE_FLAG_NONE, esp_matter_bool(false));
+        return ep;
     }
     case SLOT_TYPE_ILLUMINANCE:
     default:
