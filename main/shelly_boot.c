@@ -30,7 +30,7 @@ static const char *TAG = "shelly_boot";
 #define BS_OFF_SEQ2    0x0Cu
 #define BS_OFF_CRC_HDR 0x1Cu  /* crc32 over [0:0x1c] chained with 4 zero bytes  */
 #define BS_OFF_FLAGS0  0x1D0u /* bit0=as, bit1=rs, bits4-7=ba                   */
-#define BS_OFF_FLAGS1  0x1D1u /* low nibble=c (committed), high nibble=mfs      */
+#define BS_OFF_FLAGS1  0x1D1u /* low nibble=mfs, high nibble=c (committed)      */
 #define BS_OFF_CRC_BODY 0x1FCu /* crc32 over [0:0x1fc]                          */
 #define BS_MAGIC       0x53304853u /* "SH0S" little-endian */
 
@@ -128,7 +128,8 @@ esp_err_t shelly_boot_switch_slot(int slot)
     nb[BS_OFF_FLAGS0] = f0;
 
     uint8_t f1 = nb[BS_OFF_FLAGS1];
-    f1 = (uint8_t)((f1 & ~0x0Fu) | 0x01u);                 /* c = 1 (committed)          */
+    f1 = (uint8_t)((f1 & ~0xF0u) | 0x10u);                 /* c   = 1 (committed, hi nib) */
+    f1 = (uint8_t)(f1 & ~0x0Fu);                           /* mfs = 0 (low nibble)       */
     nb[BS_OFF_FLAGS1] = f1;
 
     wr32(nb, BS_OFF_CRC_HDR,  bs_crc_hdr(nb));
