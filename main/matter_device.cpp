@@ -8,6 +8,7 @@
  *   ONOFF_STATE   → OnOff Light Switch + Binding (state-follow)
  *   TEMPERATURE   → Temperature Sensor (server)
  *   OCCUPANCY     → Occupancy Sensor (server)
+ *   CONTACT       → Contact Sensor / BooleanState (server, set from Lua)
  *   RELAY         → OnOff Light (server, physical relay)
  *
  * Command emit to bound nodes/groups:
@@ -496,6 +497,16 @@ extern "C" void matter_update_occupancy(bool occupied)
     chip::DeviceLayer::PlatformMgr().UnlockChipStack();
 }
 
+extern "C" void matter_update_boolean_state(uint16_t endpoint_id, bool state)
+{
+    if (!endpoint_id) return;
+    /* BooleanState is created dynamically (not in the static ZAP config), so use
+     * the esp-matter attribute store update path (locks the stack internally). */
+    esp_matter_attr_val_t v = esp_matter_bool(state);
+    attribute::update(endpoint_id, BooleanState::Id,
+                      BooleanState::Attributes::StateValue::Id, &v);
+}
+
 extern "C" void matter_update_power_ch(int ch, float voltage_v, float current_a,
                                        float power_w, float frequency_hz)
 {
@@ -869,6 +880,10 @@ static endpoint_t *create_endpoint_for_type(node_t *node, script_slot_type_t typ
         cfg.on_off.on_off = relay_get_ch(1);
         return on_off_light::create(node, &cfg, ENDPOINT_FLAG_NONE, NULL);
     }
+    case SLOT_TYPE_CONTACT: {
+        contact_sensor::config_t cfg;
+        return contact_sensor::create(node, &cfg, ENDPOINT_FLAG_NONE, NULL);
+    }
     case SLOT_TYPE_ILLUMINANCE:
     default:
         return NULL;
@@ -885,6 +900,7 @@ static const char *slot_type_name(script_slot_type_t type)
     case SLOT_TYPE_OCCUPANCY:    return "Occupancy Sensor";
     case SLOT_TYPE_RELAY:        return "OnOff Light (relay 1)";
     case SLOT_TYPE_RELAY2:       return "OnOff Light (relay 2)";
+    case SLOT_TYPE_CONTACT:      return "Contact Sensor (BooleanState)";
     case SLOT_TYPE_ILLUMINANCE:  return "Illuminance Sensor";
     default:                     return "Unknown";
     }
