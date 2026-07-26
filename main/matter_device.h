@@ -40,6 +40,9 @@ void matter_send_color_temp_stop(uint16_t local_endpoint_id);
 void matter_update_temperature(int16_t centi_c);
 void matter_update_occupancy(bool occupied);
 
+/* Set a Contact/BooleanState server endpoint (per-slot endpoint id). */
+void matter_update_boolean_state(uint16_t endpoint_id, bool state);
+
 /* Update an Electrical Power Measurement endpoint. ch 0 = 1PM/2PM channel A,
  * ch 1 = 2PM channel B. No-op when that endpoint was not created.
  * Units: volts, amperes, watts, hertz — scaled to the Matter mV/mA/mW/mHz

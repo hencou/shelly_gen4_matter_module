@@ -239,6 +239,23 @@ function run()
 end
 ```
 
+### Contact sensor (switch / digital input state)
+
+To expose the raw state of a wall switch or digital input as a binary sensor in
+HA, use a **Contact Sensor (BooleanState)** slot and push the input state with
+`endpoint.set("state", bool)`:
+
+| Setting | Value |
+|---|---|
+| Endpoint Type | Contact Sensor (BooleanState server) |
+| Trigger | On input change (or Periodic) |
+
+```lua
+function run()
+  endpoint.set("state", input.sw())   -- or input.digital()
+end
+```
+
 ---
 
 ## 8. Multi-input script (different behavior per button)
@@ -421,6 +438,7 @@ Relay functions take an optional 1-based channel (`1`=relay 1, `2`=relay 2 on th
 ### Endpoint (sensor attributes)
 - `endpoint.set("measured_value", centi_celsius)` — temperature (in 100ths of °C)
 - `endpoint.set("occupied", bool)` — occupancy
+- `endpoint.set("state", bool)` — Contact Sensor (BooleanState) state
 - `endpoint.set("on_off", bool)` — relay OnOff state
 
 ### Utilities

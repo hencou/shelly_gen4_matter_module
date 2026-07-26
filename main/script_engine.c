@@ -314,6 +314,11 @@ static int l_endpoint_set(lua_State *L)
         bool val = lua_toboolean(L, 2);
         ESP_LOGI(TAG, "slot %d: set on_off=%d", slot, val);
         matter_update_relay_onoff(0, val);
+    } else if (strcmp(attr, "state") == 0) {
+        bool val = lua_toboolean(L, 2);
+        uint16_t ep = s_slots[slot].endpoint_id;
+        ESP_LOGI(TAG, "slot %d: set state=%d ep=%u", slot, val, ep);
+        matter_update_boolean_state(ep, val);
     } else {
         ESP_LOGW(TAG, "slot %d: unknown attr '%s'", slot, attr);
     }

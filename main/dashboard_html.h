@@ -163,6 +163,8 @@ static const char MGMT_HTML[] =
 "<option value=5>Illuminance Sensor</option>"
 "<option value=6>Temperature Sensor</option>"
 "<option value=7>Relay (OnOff Light server)</option>"
+"<option value=8>Relay 2 (OnOff Light server, 2PM)</option>"
+"<option value=9>Contact Sensor (BooleanState server)</option>"
 "</select>"
 
 "<label>Trigger</label>"
