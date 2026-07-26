@@ -504,11 +504,12 @@ extern "C" void matter_update_occupancy(bool occupied)
 extern "C" void matter_update_boolean_state(uint16_t endpoint_id, bool state)
 {
     if (!endpoint_id) return;
-    /* BooleanState is created dynamically (not in the static ZAP config), so use
-     * the esp-matter attribute store update path (locks the stack internally). */
-    esp_matter_attr_val_t v = esp_matter_bool(state);
-    attribute::update(endpoint_id, BooleanState::Id,
-                      BooleanState::Attributes::StateValue::Id, &v);
+    /* Use the generated CHIP accessor (same path as Occupancy/Temperature). The
+     * esp-matter attribute::update() path returns ESP_ERR_NOT_SUPPORTED (262) for
+     * this attribute; the accessor writes the ZAP attribute store directly. */
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    BooleanState::Attributes::StateValue::Set(endpoint_id, state);
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
 }
 
 extern "C" void matter_update_power_ch(int ch, float voltage_v, float current_a,
