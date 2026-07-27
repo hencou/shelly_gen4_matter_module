@@ -2,7 +2,7 @@
 # Build a single merged flash image for ESPConnect / web-based flashing.
 #
 # Usage:
-#   ./tools/make-merged.sh                # produces shelly_gen4_matter_module_factory.bin in project root
+#   ./tools//make_factory_bin_file.sh                # produces shelly_gen4_matter_module_factory.bin in project root
 #   WIN_DOWNLOADS=/mnt/c/Users/user/Downloads ./tools/make_factory_bin_file.sh
 #                                         # also copies the merged bin to your Windows Downloads
 #
