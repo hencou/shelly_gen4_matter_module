@@ -71,9 +71,18 @@ Expected output: `build/shelly_gen4_matter_module.bin` (~1.6-1.8 MB).
 
 The Shelly 1 Gen4 has **7 holes in a row** on the back — this is the **J6 connector** (silkscreen label `J6`) of the integrated ESP32-C6 module. This is the same row of pins where a Shelly Plus Add-on connects, but it can also be used to flash the ESP32-C6.
 
-You can also install this firmware **directly from the stock Shelly firmware over WiFi**, without opening the device, using a Shelly Web UI OTA zip (`python3 tools/make-webui-ota-zip.py`, uploaded via the Shelly device web interface — see [README.md → Firmware updates](README.md#firmware-updates)).
+> **The initial install is UART-only.** Installing from the stock Shelly
+> firmware over its own web page is **no longer supported**: the custom
+> firmware ships the standard ESP-IDF bootloader (replacing the stock Shelly
+> OS loader), and the stock 2.0 web updater rejects our package. The legacy
+> `tools/make-webui-ota-zip.py` remains only for stock 1.x web installs and is
+> not part of the supported flow.
+>
+> **Once the firmware runs, all future updates are done over the air via the
+> device's own OTA page and Matter OTA — no UART needed** (see section 10).
+> UART is only ever needed for this first install and for returning to stock.
 
-⚠️ **However, the Web UI OTA route cannot back up the stock Shelly firmware** — it only writes the new app. UART flashing (this section) is the **only** way to read out and save the original 8 MB stock image first. If you might ever want to return to stock, do the UART backup below **before** flashing anything. Restoring stock later also requires UART.
+⚠️ **Only UART flashing can back up the stock Shelly firmware first.** If you might ever want to return to stock, do the UART backup below **before** flashing anything. Restoring stock later also requires UART (there is no way back to stock over the air).
 
 > **Note**: the J6 pinout below was verified on hardware revision `v0.1.2`
 > (printed on the PCB).
@@ -158,7 +167,7 @@ Two routes — pick one.
 
 ### Route A — Merged binary + ESPConnect (browser, one-shot flash)
 
-Our build produces 4 separate binaries that each need to be at their own offset (bootloader 0x0, partition-table 0x8000, otadata 0xf000, app 0x20000). ESPConnect can only write one file at one offset, so we merge first.
+Our build produces 4 separate binaries that each need to be at their own offset (bootloader 0x0, partition-table 0x10000, otadata 0x11000, app 0x20000 — matching the stock Shelly partition layout). ESPConnect can only write one file at one offset, so we merge first. `tools/make_factory_bin_file.sh` produces this merged image automatically.
 
 **Step 1 — build merged bin (one-time per build):**
 
@@ -171,8 +180,8 @@ esptool.py --chip esp32c6 merge_bin \
     -o shelly_gen4_matter_module_merged.bin \
     --flash_mode dio --flash_freq 80m --flash_size 8MB \
     0x0      build/bootloader/bootloader.bin \
-    0x8000   build/partition_table/partition-table.bin \
-    0xf000   build/ota_data_initial.bin \
+    0x10000  build/partition_table/partition-table.bin \
+    0x11000  build/ota_data_initial.bin \
     0x20000  build/shelly_gen4_matter_module.bin
 
 # Copy to Windows side for ESPConnect (replace <USERNAME>)

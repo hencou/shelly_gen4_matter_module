@@ -1,6 +1,6 @@
 # shelly_gen4_matter_module
 
-**Custom Matter-over-Thread firmware** for the **Shelly Gen4** line (ESP32-C6) — one image for the Shelly 1, 1 Mini, 1PM and 2PM Gen4 — with **Lua scripting** for fully configurable endpoints.
+**Custom Matter-over-Thread firmware** for the **Shelly Gen4** line (ESP32-C6) — one image for the Shelly 1, 1PM and 2PM Gen4 — with **Lua scripting** for fully configurable endpoints.
 
 ## Features
 
@@ -10,7 +10,7 @@
 - **Thread + WiFi** — Thread for Matter communication, WiFi for management/OTA
 - **Smart boot** — auto-detects factory reset vs configured vs commissioned state
 - **WiFi management dashboard** — configure scripts, WiFi, endpoints, backup/restore
-- **Multiple update paths** — Matter OTA over Thread, Shelly Web UI OTA (also directly from stock Shelly firmware), and `.bin` upload via the dashboard. See [Firmware updates](#firmware-updates).
+- **Over-the-air updates** — Matter OTA over Thread and `.bin` upload via the dashboard (standard ESP-IDF OTA with rollback). Initial install is a one-time UART flash. See [Firmware updates](#firmware-updates).
 
 ## Endpoint types
 
@@ -33,7 +33,7 @@ Each script slot can be configured as one of these Matter endpoint types:
 
 ## Target hardware
 
-One firmware image supports four Gen4 models (all ESP32-C6, 8 MB flash). Select
+One firmware image supports three Gen4 models (all ESP32-C6, 8 MB flash). Select
 the model on the management dashboard (**Hardware → Device Type**); the choice is
 stored in NVS and applied on the next boot. The correct GPIO mapping is then used
 for the relay(s), wall-switch input(s), onboard button and status LED.
@@ -41,12 +41,15 @@ for the relay(s), wall-switch input(s), onboard button and status LED.
 | Model | Relay | Switch | Button | Status LED | Add-on | Power meter |
 |---|---|---|---|---|---|---|
 | **Shelly 1 Gen4** (default) | GPIO5 | GPIO10 | GPIO4 | GPIO15 | yes | — |
-| **Shelly 1 Mini Gen4** | GPIO10 | GPIO12 | GPIO22 | GPIO5 | no | — |
 | **Shelly 1PM Gen4** | GPIO4 | GPIO10 | GPIO1 | GPIO0 | yes | BL0942 (UART1 TX=GPIO6 RX=GPIO7, 9600 baud) |
 | **Shelly 2PM Gen4** | GPIO5 + GPIO3 | GPIO11 + GPIO10 | GPIO12 | GPIO0 | yes | ADE7953 dual-channel (I2C SDA=GPIO6 SCL=GPIO7, IRQ=GPIO19) |
 
+> ℹ️ **Shelly 1 Mini Gen4 is not supported.** The Mini has no accessible UART
+> pads for the required one-time initial flash (see [Firmware updates](#firmware-updates)),
+> so it is not on the compatibility list.
+
 > ⚠️ **Test status:** only the **Shelly 1 Gen4** has been verified on real
-> hardware. The **1 Mini Gen4**, **1PM Gen4** and **2PM Gen4** profiles are
+> hardware. The **1PM Gen4** and **2PM Gen4** profiles are
 > implemented from the published pinouts but have **not** been hardware-tested.
 > The BL0942 and ADE7953 scaling constants are placeholders and **must** be
 > calibrated against a known load on real hardware before the reported
@@ -66,7 +69,7 @@ Notes:
 - **Warning:** selecting the wrong model drives the wrong GPIOs. Pick the model
   that matches your physical hardware.
 - The **Shelly Plus Add-on** (DS18B20 + touch + analog occupancy) is available on
-  the 1 Gen4, 1PM Gen4 and 2PM Gen4, and **not** on the Mini.
+  the 1 Gen4, 1PM Gen4 and 2PM Gen4.
 - On the **1PM Gen4** the BL0942 reports voltage, current, active power,
   accumulated energy and line frequency via a Matter **Electrical Power
   Measurement** endpoint, and on the dashboard Hardware tab.
@@ -86,10 +89,11 @@ Notes:
 
 ### 1. First flash
 
-Two options for getting this firmware onto a stock Shelly 1 Gen4:
+The initial install is a **one-time UART flash** (see [INSTALL.md](INSTALL.md)): open the device and wire a USB-UART adapter to the J6 connector. This installs the standard ESP-IDF bootloader (replacing the stock Shelly OS loader) together with the partition table and app. It is also the **only** way to back up the stock Shelly firmware first (see the warning under [Firmware updates](#firmware-updates)).
 
-- **UART flash** (see [INSTALL.md](INSTALL.md)) — the classic route. Requires opening the device and wiring a USB-UART adapter to the J6 connector. This is the **only** way to make a backup of the stock Shelly firmware first (see the warning under [Firmware updates](#firmware-updates)).
-- **Shelly Web UI OTA** — install directly from the stock Shelly firmware over WiFi, no UART needed. Upload a Web UI OTA zip through the Shelly device web interface. See [Firmware updates](#firmware-updates) for how to build the zip and the important caveat about backups.
+After this one-time flash, **all** further updates are over the air (Matter OTA / dashboard `.bin` upload) — no UART needed.
+
+> Installing from the stock Shelly web page is **not supported**: the stock 2.0 web updater rejects our package, and keeping the stock OS loader caused updates to revert to stock firmware. The legacy `tools/make-webui-ota-zip.py` remains only for stock 1.x web installs and is outside the supported flow.
 
 ### 2. Factory reset → WiFi setup mode
 
@@ -143,9 +147,9 @@ After factory reset the module reboots into WiFi setup mode (step 2).
 
 ## Firmware updates
 
-Once the custom firmware is running you can update it three ways. All three flash the **same** application binary (`build/shelly_gen4_matter_module.bin`) — they only differ in transport.
+Once the custom firmware is running you can update it two ways. Both flash the **same** application binary (`build/shelly_gen4_matter_module.bin`) — they only differ in transport, and both use standard ESP-IDF OTA slot selection with bootloader rollback (a bad image is automatically reverted to the previous slot).
 
-> ⚠️ **No stock Shelly backup via OTA.** Installing this firmware directly from the stock Shelly firmware (Shelly Web UI OTA) does **not** and cannot make a backup of the original Shelly firmware — the OTA process only writes the new app and never reads the existing flash. The **only** way to back up the stock firmware is over **UART** with a tool such as [ESPConnect](https://thelastoutpostworkshop.github.io/microcontroller_devkit/espconnect/) or `esptool.py read_flash` (see [INSTALL.md](INSTALL.md)). If you may ever want to return to stock, make that UART backup **before** you flash — after the OTA it is too late.
+> ⚠️ **Return to stock is UART-only.** The custom firmware replaces the stock Shelly OS loader with the ESP-IDF bootloader, so there is **no** over-the-air path back to stock. The only way back is restoring your full 8 MB UART backup of that exact device. Make that UART backup **before** the first flash (with [ESPConnect](https://thelastoutpostworkshop.github.io/microcontroller_devkit/espconnect/) or `esptool.py read_flash`, see [INSTALL.md](INSTALL.md)) — afterwards it is too late.
 
 ### 1. Matter OTA (over Thread)
 
@@ -160,20 +164,11 @@ The image embeds the vendor/product ID and software version; the device only acc
 
 > Tip: `make-matter-ota.py` just wraps whatever is in `build/`. Always `idf.py build` first (use `idf.py fullclean` to force a genuine recompile) and confirm the `.ota` is fresh — a stale `build/` produces a stale `.ota`.
 
-### 2. Shelly Web UI OTA (zip) — also from stock firmware
+### 2. `.bin` upload via the management dashboard
 
-Build a zip that the Shelly device web interface accepts as a local firmware update. This works both **from the stock Shelly firmware** (initial install, no UART) and **from this firmware** (updates):
+For modules already running this firmware: open the management dashboard (**6× rapid button press** → WiFi), go to the **WiFi & OTA** tab, and either provide a firmware URL or upload `build/shelly_gen4_matter_module.bin` directly. The device flashes the inactive OTA slot with `esp_ota_set_boot_partition()` and reboots into it; on boot the app marks itself valid, otherwise the bootloader rolls back.
 
-```bash
-idf.py build
-python3 tools/make-webui-ota-zip.py   # → shelly-gen4-matter-module-v<version>-ota.zip
-```
-
-Upload the zip via the Shelly device's own web interface (local firmware update). The zip keeps the existing bootloader (its bundled bootloader is marked `min_version 0.0.0`, so nothing at offset `0x0` is overwritten) and uses the stock partition layout (PT at `0x10000`). The firmware migrates the partition table automatically on first boot where needed.
-
-### 3. `.bin` upload via the management dashboard
-
-For modules already running this firmware: open the management dashboard (**6× rapid button press** → WiFi), go to the **WiFi & OTA** tab, and either provide a firmware URL or upload `build/shelly_gen4_matter_module.bin` directly. The device flashes the inactive OTA slot and reboots into it.
+> Legacy: `tools/make-webui-ota-zip.py` builds a stock-Shelly-1.x web-UI zip. It is unsupported (rejected by stock 2.0) and only relevant for a one-time transition from stock 1.x without UART.
 
 ## Pin mapping
 
@@ -350,7 +345,7 @@ shelly_gen4_matter_module/
 ├── components/lua/         # Lua 5.4 as ESP-IDF component
 ├── tools/
 │   ├── make-matter-ota.py       # build Matter OTA image (.ota) — see Firmware updates
-│   ├── make-webui-ota-zip.py    # build Shelly Web UI OTA zip (stock-compatible)
+│   ├── make-webui-ota-zip.py    # legacy: Shelly 1.x web-UI OTA zip (unsupported)
 │   ├── make_factory_bin_file.sh # merge binaries for UART/ESPConnect flashing
 │   └── create_matter_cluster_group.py  # set up multicast group + bindings
 ├── SCRIPTS.md              # example Lua scripts

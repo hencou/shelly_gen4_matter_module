@@ -26,7 +26,12 @@ PLATFORM     = "esp32c6"
 # Kept above any stock version; the device never refuses it as a downgrade.
 # The real firmware version is in the app and the zip filename, not here.
 MANIFEST_VER = "99.0.0"
-BOOT_MIN     = "0.0.0"
+# LEGACY / UNSUPPORTED path. The supported install route is a one-time UART
+# flash (see INSTALL.md); this zip only exists for stock Shelly 1.x web-UI
+# installs and is rejected by stock 2.0. BOOT_MIN forces the stock updater to
+# replace its own OS loader with our ESP-IDF bootloader (otherwise the stock
+# loader would keep control and revert to stock firmware).
+BOOT_MIN     = "99.0.0"
 # Must match the stock Shelly 1 Gen4 partition layout.
 PT_ADDR  = 0x10000
 NVS_SIZE = 0xC000
