@@ -478,27 +478,29 @@ extern "C" void matter_send_color_temp_stop(uint16_t ep)
 
 extern "C" void matter_update_temperature(int16_t centi_c)
 {
-    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    /* Matter 1.5.1 / newer connectedhomeip no longer generates the Get/Set
+     * accessors here, so use the esp-matter attribute store update path (locks
+     * the stack internally). MeasuredValue is a nullable int16. */
+    esp_matter_attr_val_t v = esp_matter_nullable_int16(nullable<int16_t>(centi_c));
     for (int i = 0; i < s_num_slots; i++) {
         if (s_slot_types[i] == SLOT_TYPE_TEMPERATURE && s_slot_endpoints[i]) {
-            TemperatureMeasurement::Attributes::MeasuredValue::Set(
-                s_slot_endpoints[i], centi_c);
+            attribute::update(s_slot_endpoints[i], TemperatureMeasurement::Id,
+                TemperatureMeasurement::Attributes::MeasuredValue::Id, &v);
         }
     }
-    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
 }
 
 extern "C" void matter_update_occupancy(bool occupied)
 {
-    uint8_t b = occupied ? 1 : 0;
-    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    /* Occupancy is a bitmap8; update via the esp-matter attribute store (locks
+     * the stack internally) as the generated Set accessor is gone in 1.5.1. */
+    esp_matter_attr_val_t v = esp_matter_bitmap8(occupied ? 1 : 0);
     for (int i = 0; i < s_num_slots; i++) {
         if (s_slot_types[i] == SLOT_TYPE_OCCUPANCY && s_slot_endpoints[i]) {
-            OccupancySensing::Attributes::Occupancy::Set(
-                s_slot_endpoints[i], b);
+            attribute::update(s_slot_endpoints[i], OccupancySensing::Id,
+                OccupancySensing::Attributes::Occupancy::Id, &v);
         }
     }
-    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
 }
 
 extern "C" void matter_update_boolean_state(uint16_t endpoint_id, bool state)
