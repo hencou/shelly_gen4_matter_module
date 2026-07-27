@@ -29,6 +29,7 @@ extern "C" {
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "esp_random.h"
 }
 
 #include <cmath>
@@ -681,18 +682,37 @@ extern "C" void matter_thread_watchdog_start(void)
  *
  * Detection of a border router keys on external routes / on-mesh prefixes in
  * the Thread Network Data — things a BR publishes (OMR prefix, on-link/default
- * routes) but a plain SRP-server node does not. That way multiple fallback
- * nodes never mistake each other for a BR (so they don't toggle each other),
- * while all of them yield together as soon as the real BR is back. Detection
- * is deliberately biased toward "BR present" (yield) — the dangerous failure
- * is falsely enabling and hijacking mesh-wide discovery. */
+ * routes) but a plain SRP-server node does not. Detection is deliberately
+ * biased toward "BR present" (yield) — the dangerous failure is falsely
+ * enabling and hijacking mesh-wide discovery.
+ *
+ * When no BR is present, multiple fallback nodes elect a SINGLE active server
+ * so they don't all enable at once and keep toggling each other:
+ *   - Each node reads the DNS/SRP server entries other nodes advertise in the
+ *     Thread Network Data. The node with the LOWEST RLOC16 wins; higher-RLOC
+ *     nodes yield (debounced, so a brief netdata hiccup doesn't cause flapping).
+ *   - Enabling is delayed by a base debounce PLUS a per-node RANDOM jitter, so
+ *     two nodes rarely activate in the same instant during the initial gap.
+ * The RLOC ordering is a stable total order, so convergence is deterministic
+ * (lowest RLOC stays on) regardless of who happened to start first. */
 #define SRP_EVAL_PERIOD_US        (5 * 1000 * 1000)  /* re-evaluate every 5 s */
-#define SRP_NO_BR_DEBOUNCE_TICKS  6                  /* enable after ~30 s w/o BR */
+#define SRP_NO_BR_DEBOUNCE_TICKS  6                  /* ~30 s base delay w/o BR */
+#define SRP_JITTER_TICKS          6                  /* +0..30 s random stagger */
+#define SRP_YIELD_DEBOUNCE_TICKS  3                  /* ~15 s before yielding to peer */
+#define THREAD_ENTERPRISE_NUMBER  44970u             /* DNS/SRP service enterprise no. */
 
 static bool             s_srp_server_enabled = false;
 static bool             s_srp_fallback_active = false;
 static esp_timer_handle_t s_srp_eval_timer = nullptr;
 static int              s_srp_no_br_ticks = 0;
+static int              s_srp_yield_ticks = 0;
+static int              s_srp_enable_target = SRP_NO_BR_DEBOUNCE_TICKS;
+
+static void srp_pick_enable_target(void)
+{
+    s_srp_enable_target = SRP_NO_BR_DEBOUNCE_TICKS +
+                          (int)(esp_random() % (SRP_JITTER_TICKS + 1));
+}
 
 /* Must be called with the Thread stack lock held. */
 static bool other_border_router_present(otInstance *instance)
@@ -715,6 +735,29 @@ static bool other_border_router_present(otInstance *instance)
     return false;
 }
 
+/* Must be called with the Thread stack lock held. Returns the lowest RLOC16 of
+ * any OTHER DNS/SRP server advertised in the Thread Network Data, or 0xFFFF if
+ * none. DNS/SRP service = Thread enterprise number 44970, service-data byte 0
+ * of 0x5c (anycast) or 0x5d (unicast). */
+static uint16_t lowest_other_srp_server_rloc(otInstance *instance)
+{
+    uint16_t self = otThreadGetRloc16(instance);
+    uint16_t best = 0xFFFF;
+
+    otNetworkDataIterator it = OT_NETWORK_DATA_ITERATOR_INIT;
+    otServiceConfig svc;
+    while (otNetDataGetNextService(instance, &it, &svc) == OT_ERROR_NONE) {
+        if (svc.mEnterpriseNumber != THREAD_ENTERPRISE_NUMBER) continue;
+        if (svc.mServiceDataLength < 1) continue;
+        uint8_t sn = svc.mServiceData[0];
+        if (sn != 0x5c && sn != 0x5d) continue;
+        uint16_t rloc = svc.mServerConfig.mRloc16;
+        if (rloc == self) continue;
+        if (rloc < best) best = rloc;
+    }
+    return best;
+}
+
 /* Must be called with the Thread stack lock held. */
 static void srp_set_enabled_locked(otInstance *instance, bool enable)
 {
@@ -722,8 +765,8 @@ static void srp_set_enabled_locked(otInstance *instance, bool enable)
     otSrpServerSetEnabled(instance, enable);
     s_srp_server_enabled = enable;
     ESP_LOGW(TAG, "SRP fallback server %s", enable
-             ? "ENABLED (no border router present)"
-             : "DISABLED (border router present — yielding)");
+             ? "ENABLED (no border router — elected as lowest RLOC)"
+             : "DISABLED (border router present or lower-RLOC peer — yielding)");
 }
 
 static void srp_eval_cb(void *)
@@ -735,12 +778,32 @@ static void srp_eval_cb(void *)
         bool eligible = (role == OT_DEVICE_ROLE_ROUTER || role == OT_DEVICE_ROLE_LEADER);
 
         if (other_border_router_present(instance)) {
+            /* Real border router present → always yield immediately. */
             s_srp_no_br_ticks = 0;
-            srp_set_enabled_locked(instance, false);   /* yield immediately */
+            s_srp_yield_ticks = 0;
+            srp_pick_enable_target();                  /* fresh delay for next gap */
+            srp_set_enabled_locked(instance, false);
         } else {
-            if (s_srp_no_br_ticks < SRP_NO_BR_DEBOUNCE_TICKS) s_srp_no_br_ticks++;
-            if (eligible && s_srp_no_br_ticks >= SRP_NO_BR_DEBOUNCE_TICKS)
-                srp_set_enabled_locked(instance, true);
+            uint16_t self  = otThreadGetRloc16(instance);
+            uint16_t other = lowest_other_srp_server_rloc(instance);
+            bool peer_wins = (other != 0xFFFF && other < self);
+
+            if (peer_wins) {
+                /* A lower-RLOC fallback server should be the single active one. */
+                s_srp_no_br_ticks = 0;
+                if (s_srp_server_enabled) {
+                    if (++s_srp_yield_ticks >= SRP_YIELD_DEBOUNCE_TICKS) {
+                        srp_set_enabled_locked(instance, false);
+                        s_srp_yield_ticks = 0;
+                    }
+                }
+            } else {
+                /* We are the lowest-RLOC candidate (or the only one). */
+                s_srp_yield_ticks = 0;
+                if (s_srp_no_br_ticks < s_srp_enable_target) s_srp_no_br_ticks++;
+                if (eligible && s_srp_no_br_ticks >= s_srp_enable_target)
+                    srp_set_enabled_locked(instance, true);
+            }
         }
     }
     chip::DeviceLayer::ThreadStackMgr().UnlockThreadStack();
@@ -751,6 +814,8 @@ extern "C" esp_err_t matter_srp_server_start(void)
 {
 #if CONFIG_OPENTHREAD_BORDER_ROUTER
     if (s_srp_fallback_active) return ESP_OK;
+
+    srp_pick_enable_target();   /* per-node random enable delay to stagger peers */
 
     const esp_timer_create_args_t args = {
         .callback = &srp_eval_cb,

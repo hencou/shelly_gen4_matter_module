@@ -134,6 +134,35 @@ The dashboard is served over IPv6 on the Thread network, so you can reach it **w
 - **Direct (always works):** the module logs its addresses at boot. Use the **OMR / SLAAC** address (marked `<-- OMR` in the log, e.g. `fd96:…`) and open `http://[<omr-ipv6>]/` from any host that routes to the Thread network through your border router. The mesh-local (`fd…:0:0:ff:fe00:…`) and link-local (`fe80:…`) addresses are not routable off-mesh.
 - **By name (mDNS):** the module advertises an `_http._tcp` service (instance label = configured hostname) via the Matter SRP client. A border router with an advertising proxy re-publishes it as LAN mDNS, so you can discover it with `avahi-browse -rt _http._tcp` / `dns-sd -B _http._tcp`, or generate a clickable overview of all modules with [`tools/shelly-overview.sh`](tools/shelly-overview.sh). Note the resolvable `.local` name is the opaque CHIP SRP host (e.g. `52E2….local`), not the friendly hostname — the friendly hostname is the service label you browse.
 
+#### SRP fallback server (discovery without a border router)
+
+Direct device-to-device control (a switch bound to a lamp) needs the switch to
+**resolve** the lamp's operational address over Thread DNS-SD. That resolution
+is answered by the Thread network's SRP / DNS-SD server. Some border routers
+register services and proxy them to LAN mDNS, but do **not** answer the
+operational-discovery query a Thread node makes for another node — so a freshly
+reset/commissioned switch times out while resolving the lamp, even though the
+lamp is reachable and works from Home Assistant.
+
+To make the mesh self-sufficient, a module can run its own SRP / DNS-SD server:
+
+- Enable **`srp_mode`** on the **WiFi & OTA** tab (stored in NVS, applied after a
+  reboot once the device is commissioned).
+- The server runs only as a **fallback**: it yields immediately to any real
+  Thread border router (which also bridges LAN mDNS for Home Assistant). It
+  activates only after ~30–60 s with no border router present.
+- **Safe to enable on multiple modules.** When several fallback candidates are
+  present, they elect a single active server — the one with the lowest Thread
+  RLOC16 wins, the rest yield. A per-node random start delay staggers activation
+  and hysteresis prevents on/off flapping, so they don't keep toggling each
+  other. In practice exactly one module serves at a time.
+
+Once a module serves SRP/DNS-SD, other Thread nodes (including your switches)
+resolve peers through it, so direct bindings work independently of the border
+router. Note a fallback server has no advertising proxy, so while it is the only
+server, off-mesh controllers (Home Assistant) cannot discover the mesh — keep a
+border router online for that.
+
 #### Switch to WiFi for faster management
 
 Two buttons on the dashboard (**WiFi & OTA** tab) reboot the device into a specific mode — handy for hard-to-reach devices you can only reach over Thread:
