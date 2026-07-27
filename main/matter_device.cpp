@@ -502,8 +502,12 @@ extern "C" void matter_update_occupancy(bool occupied)
     esp_matter_attr_val_t v = esp_matter_bitmap8(occupied ? 1 : 0);
     for (int i = 0; i < s_num_slots; i++) {
         if (s_slot_types[i] == SLOT_TYPE_OCCUPANCY && s_slot_endpoints[i]) {
-            attribute::update(s_slot_endpoints[i], OccupancySensing::Id,
+            esp_err_t err = attribute::update(s_slot_endpoints[i], OccupancySensing::Id,
                 OccupancySensing::Attributes::Occupancy::Id, &v);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "occupancy update EP%u failed: %s",
+                         s_slot_endpoints[i], esp_err_to_name(err));
+            }
         }
     }
 }
@@ -1052,10 +1056,26 @@ static endpoint_t *create_endpoint_for_type(node_t *node, script_slot_type_t typ
         return ep;
     }
     case SLOT_TYPE_OCCUPANCY: {
-        occupancy_sensor::config_t cfg;
-        cfg.occupancy_sensing.feature_flags =
-            cluster::occupancy_sensing::feature::other::get_id();
-        return occupancy_sensor::create(node, &cfg, ENDPOINT_FLAG_NONE, NULL);
+        /* Build the Occupancy Sensor as a plain ember-stored cluster (same as the
+         * Contact/Temperature sensors). The occupancy_sensor::create() helper
+         * registers Occupancy with external/managed storage, so attribute::update()
+         * never writes it and it stays 0 in the data model. Occupancy and the two
+         * SensorType attributes are mandatory; PIR (type 0, bitmap bit0). */
+        endpoint_t *ep = esp_matter::endpoint::create(node, ENDPOINT_FLAG_NONE, NULL);
+        if (!ep) return NULL;
+        descriptor::config_t desc_cfg;
+        descriptor::create(ep, &desc_cfg, CLUSTER_FLAG_SERVER);
+        esp_matter::endpoint::add_device_type(ep, 0x0107 /* Occupancy Sensor */, 4);
+        cluster_t *cl = esp_matter::cluster::create(ep, OccupancySensing::Id, CLUSTER_FLAG_SERVER);
+        global::attribute::create_cluster_revision(cl, 5);
+        global::attribute::create_feature_map(cl, 1 /* PIR */);
+        esp_matter::attribute::create(cl, OccupancySensing::Attributes::Occupancy::Id,
+                                      ATTRIBUTE_FLAG_NONE, esp_matter_bitmap8(0));
+        esp_matter::attribute::create(cl, OccupancySensing::Attributes::OccupancySensorType::Id,
+                                      ATTRIBUTE_FLAG_NONE, esp_matter_enum8(0 /* PIR */));
+        esp_matter::attribute::create(cl, OccupancySensing::Attributes::OccupancySensorTypeBitmap::Id,
+                                      ATTRIBUTE_FLAG_NONE, esp_matter_bitmap8(1 /* PIR */));
+        return ep;
     }
     case SLOT_TYPE_RELAY: {
         on_off_light::config_t cfg;
