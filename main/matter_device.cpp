@@ -785,57 +785,22 @@ extern "C" void matter_log_thread_addrs(void)
     chip::DeviceLayer::ThreadStackMgr().UnlockThreadStack();
 }
 
-#if CONFIG_OPENTHREAD_SRP_CLIENT
-/* Register the management page as an _http._tcp SRP service so a border router's
- * advertising proxy republishes it as LAN mDNS (http://<host>.local/). Reuses
- * the SRP host Matter already set up; retries until that host name exists. */
-static bool               s_srp_http_registered = false;
-static char               s_srp_http_instance[64];  /* one DNS label (<=63 + NUL) */
-static otSrpClientService s_srp_http_service;
-
-extern "C" void matter_srp_advertise_httpd(void)
-{
-    if (s_srp_http_registered) return;
-
-    chip::DeviceLayer::ThreadStackMgr().LockThreadStack();
-    otInstance *instance = esp_openthread_get_instance();
-    if (instance) {
-        const otSrpClientHostInfo *host = otSrpClientGetHostInfo(instance);
-        if (host && host->mName) {
-            /* Instance label = the user-configurable hostname (Hardware page),
-             * so the service shows up as e.g. "shelly-woonkamer" when browsing
-             * _http._tcp. The SRV target stays the SRP host Matter registered,
-             * so it still resolves to the device's Thread address(es). */
-            snprintf(s_srp_http_instance, sizeof(s_srp_http_instance), "%s", ota_hostname_get());
-
-            memset(&s_srp_http_service, 0, sizeof(s_srp_http_service));
-            s_srp_http_service.mName         = "_http._tcp";
-            s_srp_http_service.mInstanceName = s_srp_http_instance;
-            s_srp_http_service.mPort         = 80;
-
-            otError err = otSrpClientAddService(instance, &s_srp_http_service);
-            if (err == OT_ERROR_NONE || err == OT_ERROR_ALREADY) {
-                s_srp_http_registered = true;
-                ESP_LOGW(TAG, "SRP: advertising _http._tcp '%s' -> %s.local:80 "
-                              "(browse _http._tcp, or open http://%s.local/ from the LAN; "
-                              "needs a border router advertising proxy)",
-                         s_srp_http_instance, host->mName, host->mName);
-            } else {
-                ESP_LOGW(TAG, "SRP: _http._tcp registration failed (%d), will retry", err);
-            }
-        }
-    }
-    chip::DeviceLayer::ThreadStackMgr().UnlockThreadStack();
-}
-#else
+/* Advertising the management page as an _http._tcp service must NOT be done by
+ * calling otSrpClientAddService() directly: the CHIP/Matter stack owns that
+ * same OpenThread SRP client and periodically re-registers its own host and
+ * services (_matter._tcp / _matterc._udp). An externally-added service collides
+ * with CHIP's managed update -> "SRP update error: domain name or RRset is
+ * duplicated", after which CHIP stops and restarts the SRP client every cycle
+ * and even fails to advertise the operational Matter node. Reach the page over
+ * Thread via the logged OMR IPv6 address (http://[<omr>]/); a proper _http._tcp
+ * advertisement would have to go through CHIP's own DNS-SD publisher. */
 extern "C" void matter_srp_advertise_httpd(void) {}
-#endif
 
 extern "C" void matter_thread_addr_log_start(void)
 {
     if (s_addr_log_timer) return;
     const esp_timer_create_args_t args = {
-        .callback = [](void *) { matter_log_thread_addrs(); matter_srp_advertise_httpd(); },
+        .callback = [](void *) { matter_log_thread_addrs(); },
         .arg = nullptr,
         .dispatch_method = ESP_TIMER_TASK,
         .name = "addr_log",
@@ -846,7 +811,6 @@ extern "C" void matter_thread_addr_log_start(void)
         ESP_LOGI(TAG, "Thread IPv6 address logger started (every 15 s)");
     }
     matter_log_thread_addrs();     /* also log immediately */
-    matter_srp_advertise_httpd();  /* register _http._tcp once host name is set */
 }
 #else
 extern "C" void matter_log_thread_addrs(void) {}

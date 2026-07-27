@@ -81,11 +81,10 @@ esp_err_t matter_srp_server_start(void);
 void matter_log_thread_addrs(void);
 void matter_thread_addr_log_start(void);
 
-/* Advertise the management page as an _http._tcp service via the OpenThread SRP
- * client, reusing the SRP host Matter already registered. A border router's
- * advertising proxy republishes it as mDNS on the LAN, so the page becomes
- * reachable at http://<host>.local/. Idempotent; safe to call repeatedly until
- * the SRP host name is available. */
+/* No-op: kept for API stability. Advertising an _http._tcp service directly on
+ * the OpenThread SRP client collides with CHIP's managed SRP registration
+ * ("RRset is duplicated") and destabilises Matter, so the management page is
+ * reached over Thread via the logged OMR IPv6 address (http://[<omr>]/). */
 void matter_srp_advertise_httpd(void);
 
 /* Factory reset → wipes Matter NVS, leaves the fabric, reboot. */
