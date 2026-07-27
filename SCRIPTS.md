@@ -70,7 +70,7 @@ Sends commands to bound devices (e.g. a lamp via Matter binding).
 
 | Setting | Value |
 |---|---|
-| Endpoint Type | OnOff Toggle + Dim + Color (client) |
+| Endpoint Type | OnOff State-Follow (client) |
 | Trigger | On button event |
 
 ```lua
