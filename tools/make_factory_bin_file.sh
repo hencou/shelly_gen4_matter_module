@@ -38,7 +38,7 @@ esptool.py --chip esp32c6 merge_bin \
     -o "${OUT}" \
     --flash_mode dio --flash_freq 80m --flash_size 8MB \
     0x0      "${BUILD_DIR}/bootloader/bootloader.bin" \
-    0x8000   "${BUILD_DIR}/partition_table/partition-table.bin" \
+    0x10000  "${BUILD_DIR}/partition_table/partition-table.bin" \
     0x11000  "${BUILD_DIR}/ota_data_initial.bin" \
     0x20000  "${BUILD_DIR}/shelly_gen4_matter_module.bin"
 

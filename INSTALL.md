@@ -158,7 +158,7 @@ Two routes — pick one.
 
 ### Route A — Merged binary + ESPConnect (browser, one-shot flash)
 
-Our build produces 4 separate binaries that each need to be at their own offset (bootloader 0x0, partition-table 0x8000, otadata 0xf000, app 0x20000). ESPConnect can only write one file at one offset, so we merge first.
+Our build produces 4 separate binaries that each need to be at their own offset (bootloader 0x0, partition-table 0x10000, otadata 0x11000, app 0x20000 — the stock Shelly Gen4 layout). ESPConnect can only write one file at one offset, so we merge first.
 
 **Step 1 — build merged bin (one-time per build):**
 
@@ -171,8 +171,8 @@ esptool.py --chip esp32c6 merge_bin \
     -o shelly_gen4_matter_module_merged.bin \
     --flash_mode dio --flash_freq 80m --flash_size 8MB \
     0x0      build/bootloader/bootloader.bin \
-    0x8000   build/partition_table/partition-table.bin \
-    0xf000   build/ota_data_initial.bin \
+    0x10000  build/partition_table/partition-table.bin \
+    0x11000  build/ota_data_initial.bin \
     0x20000  build/shelly_gen4_matter_module.bin
 
 # Copy to Windows side for ESPConnect (replace <USERNAME>)
