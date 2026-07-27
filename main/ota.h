@@ -40,6 +40,14 @@ void ota_request_at_next_boot(void);
 /* Set OTA pending flag and reboot (used by web /ota POST handler). */
 void ota_request_ota_reboot(void);
 
+/* WiFi management mode: set an NVS flag and reboot. On the next boot the device
+ * brings up WiFi (STA if credentials are stored, otherwise a SoftAP) and serves
+ * the management dashboard, without starting Matter/Thread. After 10 minutes it
+ * reboots back to normal Thread/Matter mode. Meant to be triggered remotely from
+ * the management page over Thread, so a hard-to-reach device can be managed over
+ * a faster WiFi link without the physical 6x button press. */
+void ota_request_wifi_mode_reboot(void);
+
 /* Enable WiFi alongside Thread at runtime (non-persistent, lost on reboot).
  * If STA connection fails, WiFi credentials are wiped and AP mode is started. */
 void ota_enable_wifi_runtime(void);

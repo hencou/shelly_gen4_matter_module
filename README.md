@@ -127,9 +127,21 @@ After reboot with configured endpoints, the module enters **BLE commissioning mo
 
 After commissioning, Thread + Bluetooth are active for Matter communication. WiFi is off by default.
 
-To access the management dashboard: **press any button 6× rapidly** (within 2.5 seconds). This disables Thread and starts WiFi in APSTA mode:
-- AP always available: `shelly-cfg-XXXX` on `192.168.4.1`
-- STA connects to your router (if credentials are saved)
+#### Reach the management dashboard over Thread
+
+The dashboard is served over IPv6 on the Thread network, so you can reach it **without WiFi**:
+
+- **Direct (always works):** the module logs its addresses at boot. Use the **OMR / SLAAC** address (marked `<-- OMR` in the log, e.g. `fd96:…`) and open `http://[<omr-ipv6>]/` from any host that routes to the Thread network through your border router. The mesh-local (`fd…:0:0:ff:fe00:…`) and link-local (`fe80:…`) addresses are not routable off-mesh.
+- **By name (mDNS):** the module advertises an `_http._tcp` service (instance label = configured hostname) via the Matter SRP client. A border router with an advertising proxy re-publishes it as LAN mDNS, so you can discover it with `avahi-browse -rt _http._tcp` / `dns-sd -B _http._tcp`, or generate a clickable overview of all modules with [`tools/shelly-overview.sh`](tools/shelly-overview.sh). Note the resolvable `.local` name is the opaque CHIP SRP host (e.g. `52E2….local`), not the friendly hostname — the friendly hostname is the service label you browse.
+
+#### Switch to WiFi for faster management
+
+Two buttons on the dashboard (**WiFi & OTA** tab) reboot the device into a specific mode — handy for hard-to-reach devices you can only reach over Thread:
+
+- **Restart to WiFi mode** — reboots into WiFi (STA if credentials are saved, otherwise the `shelly-cfg-XXXX` SoftAP on `192.168.4.1`) and serves the dashboard there. Matter/Thread stays down while in this mode. After **10 minutes** it automatically reboots back to Thread mode, so you never lose the device permanently.
+- **Restart to Thread mode** — reboots straight back into normal Matter-over-Thread operation.
+
+The physical shortcut still works too: **press any button 6× rapidly** (within 2.5 seconds) to disable Thread and start WiFi in APSTA mode at runtime (AP `shelly-cfg-XXXX` on `192.168.4.1`, plus STA if credentials are saved).
 
 ### Backup & restore
 
@@ -295,6 +307,7 @@ The relay functions take an **optional 1-based channel** argument (`1` = relay 1
 | **Configured** (scripts, no fabrics) | OFF | ON (BLE commissioning) | After configuring endpoints + reboot |
 | **Commissioned** (normal) | OFF | ON (Thread active) | After commissioning |
 | **6× press** (management) | ON — APSTA mode | Thread disabled | Press any button 6× rapidly |
+| **WiFi mode** (management) | ON — STA or AP | Thread disabled | "Restart to WiFi mode" button (10 min, then back to Thread) |
 
 ## Status LED
 
@@ -349,7 +362,8 @@ shelly_gen4_matter_module/
 │   ├── make-matter-ota.py       # build Matter OTA image (.ota) — see Firmware updates
 │   ├── make-webui-ota-zip.py    # legacy: Shelly 1.x web-UI OTA zip (unsupported)
 │   ├── make_factory_bin_file.sh # merge binaries for UART/ESPConnect flashing
-│   └── create_matter_cluster_group.py  # set up multicast group + bindings
+│   ├── create_matter_cluster_group.py  # set up multicast group + bindings
+│   └── shelly-overview.sh       # clickable HTML overview of modules via mDNS
 ├── SCRIPTS.md              # example Lua scripts
 ├── INSTALL.md
 └── INSTALL_VSCODE_WINDOWS.md
