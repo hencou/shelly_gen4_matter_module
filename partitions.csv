@@ -1,14 +1,17 @@
-# Shelly 1 Gen4 (8 MB flash) — stock-compatible partition layout.
-# Offsets follow the stock Shelly 1 Gen4 layout for Web UI OTA compatibility.
+# Shelly Gen4 (8 MB flash) — stock-compatible partition layout.
+# Offsets and sizes match the stock Shelly Gen4 layout (as read from the stock
+# partition table at 0x10000, confirmed against full-chip flash dumps) so the
+# stock Shelly OS loader boots our slots and flashing to/from stock Shelly
+# firmware keeps working.
 # Matter data (chip-factory, chip-kvs) is stored in the nvs partition.
 # The fs_0/fs_1/zb_storage/shelly partitions are stock placeholders not used
 # by this firmware.
 # Name,        Type, SubType,  Offset,    Size,     Flags
 otadata,       data, ota,      0x11000,   0x2000,
 nvs,           data, nvs,      0x14000,   0xC000,
-app_0,         app,  ota_0,    0x20000,   0x280000,
-fs_0,          data, 0x82,     0x2A0000,  0xE0000,
-app_1,         app,  ota_1,    0x380000,  0x280000,
-fs_1,          data, 0x82,     0x600000,  0xE0000,
+app_0,         app,  ota_0,    0x20000,   0x300000,
+fs_0,          data, 0x82,     0x320000,  0xE0000,
+app_1,         app,  ota_1,    0x400000,  0x300000,
+fs_1,          data, 0x82,     0x700000,  0xE0000,
 zb_storage,    data, 0x81,     0x7E8000,  0x8000,
 shelly,        data, 0x88,     0x7F0000,  0x10000,
