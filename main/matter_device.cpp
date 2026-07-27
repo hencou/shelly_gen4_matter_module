@@ -7,6 +7,7 @@
  *   ONOFF_TOGGLE  → OnOff Light Switch + LevelControl + ColorControl + Binding
  *   ONOFF_STATE   → OnOff Light Switch + Binding (state-follow)
  *   TEMPERATURE   → Temperature Sensor (server)
+ *   ILLUMINANCE   → Illuminance Sensor (server, lux set from Lua)
  *   OCCUPANCY     → Occupancy Sensor (server)
  *   CONTACT       → Contact Sensor / BooleanState (server, set from Lua)
  *   RELAY         → OnOff Light (server, physical relay)
@@ -29,6 +30,8 @@ extern "C" {
 #include "esp_timer.h"
 #include "esp_system.h"
 }
+
+#include <cmath>
 
 #include <esp_matter.h>
 #include <esp_matter_attribute_utils.h>
@@ -489,6 +492,32 @@ extern "C" void matter_update_temperature(int16_t centi_c)
                 TemperatureMeasurement::Attributes::MeasuredValue::Id, &v);
             if (err != ESP_OK) {
                 ESP_LOGW(TAG, "temperature update EP%u failed: %s",
+                         s_slot_endpoints[i], esp_err_to_name(err));
+            }
+        }
+    }
+}
+
+extern "C" void matter_update_illuminance(float lux)
+{
+    /* Matter encodes illuminance as MeasuredValue = 10000*log10(lux)+1 (uint16,
+     * range 1..0xFFFE); 0 means "unknown / too dark". */
+    uint16_t measured;
+    if (lux <= 0.0f) {
+        measured = 0;
+    } else {
+        double enc = 10000.0 * std::log10((double)lux) + 1.0;
+        if (enc < 1.0)      enc = 1.0;
+        if (enc > 0xFFFE)   enc = 0xFFFE;
+        measured = (uint16_t)enc;
+    }
+    esp_matter_attr_val_t v = esp_matter_nullable_uint16(nullable<uint16_t>(measured));
+    for (int i = 0; i < s_num_slots; i++) {
+        if (s_slot_types[i] == SLOT_TYPE_ILLUMINANCE && s_slot_endpoints[i]) {
+            esp_err_t err = attribute::update(s_slot_endpoints[i], IlluminanceMeasurement::Id,
+                IlluminanceMeasurement::Attributes::MeasuredValue::Id, &v);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "illuminance update EP%u failed: %s",
                          s_slot_endpoints[i], esp_err_to_name(err));
             }
         }
@@ -1106,7 +1135,27 @@ static endpoint_t *create_endpoint_for_type(node_t *node, script_slot_type_t typ
                                       ATTRIBUTE_FLAG_NONE, esp_matter_bool(false));
         return ep;
     }
-    case SLOT_TYPE_ILLUMINANCE:
+    case SLOT_TYPE_ILLUMINANCE: {
+        /* Plain ember-stored IlluminanceMeasurement cluster (same approach as the
+         * Contact/Temperature sensors) so MeasuredValue is writable from Lua via
+         * attribute::update(). MeasuredValue/Min/Max are nullable uint16; the
+         * value is the Matter-encoded lux (10000*log10(lux)+1). */
+        endpoint_t *ep = esp_matter::endpoint::create(node, ENDPOINT_FLAG_NONE, NULL);
+        if (!ep) return NULL;
+        descriptor::config_t desc_cfg;
+        descriptor::create(ep, &desc_cfg, CLUSTER_FLAG_SERVER);
+        esp_matter::endpoint::add_device_type(ep, 0x0106 /* Light Sensor */, 2);
+        cluster_t *cl = esp_matter::cluster::create(ep, IlluminanceMeasurement::Id, CLUSTER_FLAG_SERVER);
+        global::attribute::create_cluster_revision(cl, 3);
+        global::attribute::create_feature_map(cl, 0);
+        esp_matter::attribute::create(cl, IlluminanceMeasurement::Attributes::MeasuredValue::Id,
+                                      ATTRIBUTE_FLAG_NULLABLE, esp_matter_nullable_uint16(nullable<uint16_t>()));
+        esp_matter::attribute::create(cl, IlluminanceMeasurement::Attributes::MinMeasuredValue::Id,
+                                      ATTRIBUTE_FLAG_NULLABLE, esp_matter_nullable_uint16(nullable<uint16_t>(1)));
+        esp_matter::attribute::create(cl, IlluminanceMeasurement::Attributes::MaxMeasuredValue::Id,
+                                      ATTRIBUTE_FLAG_NULLABLE, esp_matter_nullable_uint16(nullable<uint16_t>(0xFFFE)));
+        return ep;
+    }
     default:
         return NULL;
     }

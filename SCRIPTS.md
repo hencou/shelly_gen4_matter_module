@@ -256,6 +256,33 @@ function run()
 end
 ```
 
+### Illuminance sensor (analog IN)
+
+Expose a light level to Home Assistant via the Matter Illuminance Measurement
+cluster. Use an **Illuminance Sensor** slot and push a value in **lux** with
+`endpoint.set("illuminance", lux)` — the firmware encodes it to the Matter
+`MeasuredValue` (`10000*log10(lux)+1`) for you; pass `0` for "dark/unknown".
+
+| Setting | Value |
+|---|---|
+| Endpoint Type | Illuminance Sensor |
+| Trigger | Periodic |
+| Period | 5000 (5 seconds) |
+
+If you have a real lux reading, pass it directly. The example below maps the
+analog input (`0–100 %`, e.g. a 0–10 V light sensor) onto a 0–2000 lux range:
+
+```lua
+local max_lux = 2000
+
+function run()
+  local duty = input.analog()          -- 0..100 %
+  local lux = duty / 100 * max_lux
+  endpoint.set("illuminance", lux)
+  log("duty=" .. duty .. "% -> " .. math.floor(lux) .. " lux")
+end
+```
+
 ---
 
 ## 8. Multi-input script (different behavior per button)
@@ -437,6 +464,7 @@ Relay functions take an optional 1-based channel (`1`=relay 1, `2`=relay 2 on th
 
 ### Endpoint (sensor attributes)
 - `endpoint.set("measured_value", centi_celsius)` — temperature (in 100ths of °C)
+- `endpoint.set("illuminance", lux)` — illuminance (in lux; encoded to Matter internally)
 - `endpoint.set("occupied", bool)` — occupancy
 - `endpoint.set("state", bool)` — Contact Sensor (BooleanState) state
 - `endpoint.set("on_off", bool)` — relay OnOff state
