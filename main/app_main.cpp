@@ -8,7 +8,6 @@
 extern "C" {
 #include "esp_log.h"
 #include "esp_err.h"
-#include "esp_flash.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
 #include "driver/gpio.h"
@@ -39,61 +38,6 @@ extern "C" {
 #include <platform/ConnectivityManager.h>
 
 static const char *TAG = "app";
-
-/*
- * Partition-table fallback for old modules.
- *
- * Modules flashed with 1.5.4 via ESPConnect run our ESP-IDF bootloader that
- * was compiled with the partition table at 0x8000. This firmware is compiled
- * with the table at 0x10000 (the stock Shelly layout, so newly flashed modules
- * keep the original Shelly partition structure). On the old modules the
- * bootloader still boots us from app_0@0x20000, but our esp_partition
- * subsystem looks for the table at 0x10000 where nothing is written yet.
- *
- * If there is no valid table at 0x10000 but there is one at 0x8000, copy it
- * to 0x10000. 0x10000 is a free 4 KB sector in front of otadata@0x11000 in
- * both the old and new layouts, so this write never touches otadata/nvs/app.
- * The copied table keeps the old module's own geometry (2.5 MB slots); it just
- * lives at the offset this firmware reads. No reboot: esp_partition loads the
- * table lazily on first use, so writing it here (before any partition access)
- * is enough. Newly flashed modules already have a valid table at 0x10000 and
- * skip this entirely.
- */
-#define PT_OLD_OFFSET  0x8000
-#define PT_MAGIC_0     0xAA
-#define PT_MAGIC_1     0x50
-#define PT_SECTOR_SIZE 4096
-
-static void migrate_partition_table_if_needed(void)
-{
-    if (CONFIG_PARTITION_TABLE_OFFSET == PT_OLD_OFFSET)
-        return;
-
-    uint8_t magic[2];
-    if (esp_flash_read(NULL, magic, CONFIG_PARTITION_TABLE_OFFSET, 2) == ESP_OK &&
-        magic[0] == PT_MAGIC_0 && magic[1] == PT_MAGIC_1)
-        return; /* valid table already present at the compiled offset */
-
-    if (esp_flash_read(NULL, magic, PT_OLD_OFFSET, 2) != ESP_OK)
-        return;
-    if (magic[0] != PT_MAGIC_0 || magic[1] != PT_MAGIC_1)
-        return; /* no old table to migrate (freshly flashed clean module) */
-
-    uint8_t *buf = (uint8_t *)malloc(PT_SECTOR_SIZE);
-    if (!buf)
-        return;
-
-    if (esp_flash_read(NULL, buf, PT_OLD_OFFSET, PT_SECTOR_SIZE) != ESP_OK ||
-        esp_flash_erase_region(NULL, CONFIG_PARTITION_TABLE_OFFSET, PT_SECTOR_SIZE) != ESP_OK ||
-        esp_flash_write(NULL, buf, CONFIG_PARTITION_TABLE_OFFSET, PT_SECTOR_SIZE) != ESP_OK) {
-        free(buf);
-        return;
-    }
-
-    free(buf);
-    ESP_LOGW(TAG, "migrated partition table 0x%x -> 0x%x (old ESPConnect module)",
-             PT_OLD_OFFSET, CONFIG_PARTITION_TABLE_OFFSET);
-}
 
 extern "C" void on_button_event(input_id_t id, button_event_t evt)
 {
@@ -140,10 +84,6 @@ extern "C" void on_power_ade(const power_meter_reading_t *a, const power_meter_r
 
 extern "C" void app_main(void)
 {
-    /* Must run before any esp_partition/nvs/ota access: makes the partition
-     * table available at the compiled offset on old ESPConnect modules. */
-    migrate_partition_table_if_needed();
-
     /* Mark current image as valid immediately so the bootloader does not
      * roll back while the rest of init runs (Matter/sensors can take seconds).
      * Done before the (possibly slow) nvs/Matter init and without an extra

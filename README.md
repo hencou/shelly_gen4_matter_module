@@ -182,9 +182,11 @@ For modules already running this firmware: open the management dashboard (**6× 
 
 > Legacy: `tools/make-webui-ota-zip.py` builds a stock-Shelly-1.x web-UI zip. It is unsupported (rejected by stock 2.0) and only relevant for a one-time transition from stock 1.x without UART.
 
-### Updating older modules (partition-table fallback)
+### Older modules need a one-time UART reflash
 
-Modules that were flashed with an earlier build (via ESPConnect) run our ESP-IDF bootloader with the partition table at `0x8000`, whereas this firmware reads it at `0x10000` (the stock Shelly offset, so newly flashed modules keep the original Shelly partition structure). Those old modules update over the air without reflashing: on first boot after the OTA, `migrate_partition_table_if_needed()` copies the existing partition table from `0x8000` to `0x10000` (a free sector in front of `otadata@0x11000`, so `otadata`/`nvs`/apps are never touched) and continues. No UART, no bootloader rewrite. Newly flashed modules already have a valid table at `0x10000` and skip this.
+Modules flashed with an early build (via ESPConnect) run an ESP-IDF bootloader whose partition table sits at `0x8000` with the ESP-IDF-default geometry (`otadata@0xf000`, 2.5 MB OTA slots at `0x20000`/`0x2a0000`). This firmware reads its table at `0x10000` (the stock Shelly offset). Those two layouts are incompatible: `0x10000` is the **second `otadata` sector** on the old geometry, so an over-the-air update onto such a module boots once into the new image but reverts to the old one on the next reboot (the new slot is never marked valid because `otadata` is disturbed).
+
+Therefore old modules must be brought onto the current layout with a **one-time UART reflash** of the full merged image (`tools/make_factory_bin_file.sh`, flash at offset `0x0` with *Erase entire flash before writing*). This writes the partition table at `0x10000` with the stock geometry, after which all further updates are OTA and persist across reboots. A full erase also clears the Matter fabrics, so re-commission the module afterwards (make a dashboard backup first if needed).
 
 ## Pin mapping
 
