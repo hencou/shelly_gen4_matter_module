@@ -14,5 +14,5 @@
 /* Software version reported via Matter Basic Information cluster.
  * HA reads these to display the firmware version.  Keep in sync with
  * FW_VERSION in app_config.h. */
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 156
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.5.6"
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 158
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.5.8"
