@@ -4,11 +4,11 @@
 
 > For Windows users: use [`INSTALL_VSCODE_WINDOWS.md`](INSTALL_VSCODE_WINDOWS.md) (WSL2 + VS Code is the officially recommended route). Native Windows is not supported by esp-matter.
 
-## 1. ESP-IDF v5.4.1
+## 1. ESP-IDF v5.5.4
 
 ```bash
 mkdir -p ~/esp && cd ~/esp
-git clone --recursive -b v5.4.1 https://github.com/espressif/esp-idf.git
+git clone --recursive -b v5.5.4 https://github.com/espressif/esp-idf.git
 cd esp-idf
 ./install.sh esp32c6
 . ./export.sh           # every new shell session
