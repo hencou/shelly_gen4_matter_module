@@ -30,8 +30,15 @@ CONFIG_OPENTHREAD_CLI=n
 CONFIG_OPENTHREAD_NUM_MESSAGE_BUFFERS=128
 # Native 802.15.4 radio (not via external RCP)
 CONFIG_OPENTHREAD_RADIO_NATIVE=y
-# SRP Server support (Thread DNS-SD service discovery without full TBR)
+# SRP Server support (Thread DNS-SD service discovery without full TBR).
+# BORDER_ROUTER=y is required to compile the SRP/DNS-SD server, but its
+# infra-dependent sub-features (border routing, NAT64, backbone router) are
+# disabled via the custom OpenThread header below — this is a Thread-only
+# device with no backbone netif, and those features hang the stack at boot.
 CONFIG_OPENTHREAD_BORDER_ROUTER=y
+CONFIG_OPENTHREAD_HEADER_CUSTOM=y
+CONFIG_OPENTHREAD_CUSTOM_HEADER_PATH="main"
+CONFIG_OPENTHREAD_CUSTOM_HEADER_FILE_NAME="openthread_custom_config.h"
 # LwIP
 CONFIG_LWIP_IPV6_NUM_ADDRESSES=12
 CONFIG_LWIP_MULTICAST_PING=y
