@@ -73,7 +73,7 @@ The Shelly 1 Gen4 has **7 holes in a row** on the back — this is the **J6 conn
 
 You can also install this firmware **directly from the stock Shelly firmware over WiFi**, without opening the device, using a Shelly Web UI OTA zip (`python3 tools/make-webui-ota-zip.py`, uploaded via the Shelly device web interface — see [README.md → Firmware updates](README.md#firmware-updates)).
 
-⚠️ **However, the Web UI OTA route cannot back up the stock Shelly firmware, and it replaces the stock Shelly OS loader with a standard ESP-IDF bootloader** (this is what makes later OTA updates reliable). UART flashing (this section) is the **only** way to read out and save the original 8 MB stock image first, and once the stock loader is gone, restoring stock is only possible from that UART backup. If you might ever want to return to stock, do the UART backup below **before** flashing anything.
+⚠️ **However, the Web UI OTA route cannot back up the stock Shelly firmware** — it only writes the new app. UART flashing (this section) is the **only** way to read out and save the original 8 MB stock image first. If you might ever want to return to stock, do the UART backup below **before** flashing anything. Restoring stock later also requires UART.
 
 > **Note**: the J6 pinout below was verified on hardware revision `v0.1.2`
 > (printed on the PCB).
@@ -158,7 +158,7 @@ Two routes — pick one.
 
 ### Route A — Merged binary + ESPConnect (browser, one-shot flash)
 
-Our build produces 4 separate binaries that each need to be at their own offset (bootloader 0x0, partition-table 0x10000, otadata 0x11000, app 0x20000 — the stock Shelly Gen4 layout). ESPConnect can only write one file at one offset, so we merge first.
+Our build produces 4 separate binaries that each need to be at their own offset (bootloader 0x0, partition-table 0x8000, otadata 0xf000, app 0x20000). ESPConnect can only write one file at one offset, so we merge first.
 
 **Step 1 — build merged bin (one-time per build):**
 
@@ -171,8 +171,8 @@ esptool.py --chip esp32c6 merge_bin \
     -o shelly_gen4_matter_module_merged.bin \
     --flash_mode dio --flash_freq 80m --flash_size 8MB \
     0x0      build/bootloader/bootloader.bin \
-    0x10000  build/partition_table/partition-table.bin \
-    0x11000  build/ota_data_initial.bin \
+    0x8000   build/partition_table/partition-table.bin \
+    0xf000   build/ota_data_initial.bin \
     0x20000  build/shelly_gen4_matter_module.bin
 
 # Copy to Windows side for ESPConnect (replace <USERNAME>)
@@ -305,16 +305,6 @@ Press the button → the lamp should respond directly, **without HA in the path*
 3. Navigate to the WiFi tab in the dashboard → enter SSID + password + OTA URL.
 4. The device downloads and flashes the new firmware, then reboots.
 5. For subsequent OTA updates: 6× press suffices — WiFi credentials are saved in NVS.
-
-> **Bootloader:** this firmware runs under the standard ESP-IDF bootloader. The
-> Web UI OTA package (`tools/make-webui-ota-zip.py`) replaces the stock Shelly OS
-> loader with the build's own ESP-IDF bootloader on install, so from then on the
-> web upload above and Matter OTA both use the standard ESP-IDF otadata slot
-> select — no dependency on Shelly's proprietary `SH0S` boot-select and no
-> risk of the loader reverting to the previous slot. The new image is written to
-> the inactive slot, so the previous image remains bootable if power is lost
-> mid-update. Because the stock loader is gone, returning to stock firmware
-> requires the full-chip UART backup (see section 11).
 
 ## 11. Rollback to stock Shelly firmware
 

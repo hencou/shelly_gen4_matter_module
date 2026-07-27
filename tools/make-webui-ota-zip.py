@@ -12,13 +12,10 @@
 # empty filesystem image, and writes shelly-gen4-matter-module-v<version>-ota.zip.
 #
 # Every part in the zip comes from the build; no Shelly binaries are included.
-# The zip replaces the stock Shelly OS loader with the build's own standard
-# ESP-IDF bootloader: the boot part carries min_version 99.0.0, higher than any
-# stock loader, so the stock updater flashes the bundled bootloader at offset
-# 0x0. Once the ESP-IDF bootloader is in place, all further updates use the
-# standard IDF otadata slot-select (web upload here, or Matter OTA), with no
-# dependency on Shelly's proprietary SH0S boot-select. Returning to stock
-# afterwards requires the full-chip UART backup taken before flashing.
+# Shelly's OTA requires a boot part; the zip includes the bootloader with
+# min_version 0.0.0. The device reads that as 0.0.0 and keeps its existing
+# bootloader rather than flashing the bundled one, so nothing at offset 0x0
+# is overwritten.
 #
 import datetime, hashlib, json, os, sys, tempfile, zipfile
 
@@ -29,10 +26,7 @@ PLATFORM     = "esp32c6"
 # Kept above any stock version; the device never refuses it as a downgrade.
 # The real firmware version is in the app and the zip filename, not here.
 MANIFEST_VER = "99.0.0"
-# The stock updater flashes the bundled bootloader only when this min_version is
-# higher than its running loader. Set above any stock version so the install
-# replaces the stock Shelly OS loader with the build's own ESP-IDF bootloader.
-BOOT_MIN     = "99.0.0"
+BOOT_MIN     = "0.0.0"
 # Must match the stock Shelly 1 Gen4 partition layout.
 PT_ADDR  = 0x10000
 NVS_SIZE = 0xC000

@@ -51,17 +51,13 @@ extern "C" {
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
 #include <platform/ESP32/OpenthreadLauncher.h>
 #include "esp_openthread_types.h"
+#if CONFIG_OPENTHREAD_BORDER_ROUTER
 #include "esp_openthread.h"
 #include "esp_timer.h"
 #include <openthread/instance.h>
-#include <openthread/thread.h>
-#include <openthread/ip6.h>
-#if CONFIG_OPENTHREAD_SRP_CLIENT
-#include <openthread/srp_client.h>
-#endif
-#if CONFIG_OPENTHREAD_BORDER_ROUTER
 #include <openthread/srp_server.h>
 #include <openthread/netdata.h>
+#include <openthread/thread.h>
 #endif
 
 /* Default config macros are NOT provided by esp_openthread.h in esp-matter/
@@ -733,126 +729,6 @@ extern "C" esp_err_t matter_srp_server_start(void)
     return ESP_ERR_NOT_SUPPORTED;
 #endif
 }
-
-/* ------------------------------------------------------------------------- *
- * Thread IPv6 address logger (spike): print the device's Thread unicast
- * addresses so the management page can be reached over IPv6/Thread from a
- * browser. The globally-routable OMR address (SLAAC origin, handed out by a
- * border router) is the one to use from the LAN; link-local (fe80::) and the
- * mesh-local EID are not reachable off-mesh.
- * ------------------------------------------------------------------------- */
-#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
-static esp_timer_handle_t s_addr_log_timer = nullptr;
-
-static const char *addr_origin_str(uint8_t origin)
-{
-    switch (origin) {
-    case OT_ADDRESS_ORIGIN_THREAD: return "thread";
-    case OT_ADDRESS_ORIGIN_SLAAC:  return "slaac";
-    case OT_ADDRESS_ORIGIN_DHCPV6: return "dhcp6";
-    case OT_ADDRESS_ORIGIN_MANUAL: return "manual";
-    default:                       return "?";
-    }
-}
-
-extern "C" void matter_log_thread_addrs(void)
-{
-    chip::DeviceLayer::ThreadStackMgr().LockThreadStack();
-    otInstance *instance = esp_openthread_get_instance();
-    if (instance) {
-        const otMeshLocalPrefix *ml = otThreadGetMeshLocalPrefix(instance);
-        ESP_LOGW(TAG, "---- Thread IPv6 addresses (role=%d) ----",
-                 (int)otThreadGetDeviceRole(instance));
-        for (const otNetifAddress *a = otIp6GetUnicastAddresses(instance);
-             a != nullptr; a = a->mNext) {
-            char buf[OT_IP6_ADDRESS_STRING_SIZE];
-            otIp6AddressToString(&a->mAddress, buf, sizeof(buf));
-
-            const uint8_t *b = a->mAddress.mFields.m8;
-            bool link_local = (b[0] == 0xfe && (b[1] & 0xc0) == 0x80);
-            bool mesh_local = (ml && memcmp(b, ml->m8, 8) == 0);
-            const char *hint = "";
-            if (link_local)      hint = " (link-local, not routable off-mesh)";
-            else if (mesh_local) hint = " (mesh-local, not routable off-mesh)";
-            else if (a->mAddressOrigin == OT_ADDRESS_ORIGIN_SLAAC)
-                hint = " <-- OMR, try http://[this]/ from the LAN";
-
-            ESP_LOGW(TAG, "  %s/%u origin=%s%s",
-                     buf, a->mPrefixLength, addr_origin_str(a->mAddressOrigin), hint);
-        }
-        ESP_LOGW(TAG, "-----------------------------------------");
-    }
-    chip::DeviceLayer::ThreadStackMgr().UnlockThreadStack();
-}
-
-#if CONFIG_OPENTHREAD_SRP_CLIENT
-/* Register the management page as an _http._tcp SRP service so a border router's
- * advertising proxy republishes it as LAN mDNS (http://<host>.local/). Reuses
- * the SRP host Matter already set up; retries until that host name exists. */
-static bool               s_srp_http_registered = false;
-static char               s_srp_http_instance[64];  /* one DNS label (<=63 + NUL) */
-static otSrpClientService s_srp_http_service;
-
-extern "C" void matter_srp_advertise_httpd(void)
-{
-    if (s_srp_http_registered) return;
-
-    chip::DeviceLayer::ThreadStackMgr().LockThreadStack();
-    otInstance *instance = esp_openthread_get_instance();
-    if (instance) {
-        const otSrpClientHostInfo *host = otSrpClientGetHostInfo(instance);
-        if (host && host->mName) {
-            /* Instance label = the user-configurable hostname (Hardware page),
-             * so the service shows up as e.g. "shelly-woonkamer" when browsing
-             * _http._tcp. The SRV target stays the SRP host Matter registered,
-             * so it still resolves to the device's Thread address(es). */
-            snprintf(s_srp_http_instance, sizeof(s_srp_http_instance), "%s", ota_hostname_get());
-
-            memset(&s_srp_http_service, 0, sizeof(s_srp_http_service));
-            s_srp_http_service.mName         = "_http._tcp";
-            s_srp_http_service.mInstanceName = s_srp_http_instance;
-            s_srp_http_service.mPort         = 80;
-
-            otError err = otSrpClientAddService(instance, &s_srp_http_service);
-            if (err == OT_ERROR_NONE || err == OT_ERROR_ALREADY) {
-                s_srp_http_registered = true;
-                ESP_LOGW(TAG, "SRP: advertising _http._tcp '%s' -> %s.local:80 "
-                              "(browse _http._tcp, or open http://%s.local/ from the LAN; "
-                              "needs a border router advertising proxy)",
-                         s_srp_http_instance, host->mName, host->mName);
-            } else {
-                ESP_LOGW(TAG, "SRP: _http._tcp registration failed (%d), will retry", err);
-            }
-        }
-    }
-    chip::DeviceLayer::ThreadStackMgr().UnlockThreadStack();
-}
-#else
-extern "C" void matter_srp_advertise_httpd(void) {}
-#endif
-
-extern "C" void matter_thread_addr_log_start(void)
-{
-    if (s_addr_log_timer) return;
-    const esp_timer_create_args_t args = {
-        .callback = [](void *) { matter_log_thread_addrs(); matter_srp_advertise_httpd(); },
-        .arg = nullptr,
-        .dispatch_method = ESP_TIMER_TASK,
-        .name = "addr_log",
-        .skip_unhandled_events = true,
-    };
-    if (esp_timer_create(&args, &s_addr_log_timer) == ESP_OK) {
-        esp_timer_start_periodic(s_addr_log_timer, 15 * 1000 * 1000);  /* 15 s */
-        ESP_LOGI(TAG, "Thread IPv6 address logger started (every 15 s)");
-    }
-    matter_log_thread_addrs();     /* also log immediately */
-    matter_srp_advertise_httpd();  /* register _http._tcp once host name is set */
-}
-#else
-extern "C" void matter_log_thread_addrs(void) {}
-extern "C" void matter_thread_addr_log_start(void) {}
-extern "C" void matter_srp_advertise_httpd(void) {}
-#endif
 
 extern "C" void matter_factory_reset(void)
 {
