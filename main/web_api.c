@@ -1125,8 +1125,14 @@ static esp_err_t api_diag_get(httpd_req_t *req)
 
 /* ---------- HTTP server ---------- */
 
+static httpd_handle_t s_srv = NULL;
+
 void web_api_start_httpd(void)
 {
+    if (s_srv) {
+        ESP_LOGI(TAG, "httpd already running, skipping start");
+        return;
+    }
     httpd_handle_t srv = NULL;
     httpd_config_t hc = HTTPD_DEFAULT_CONFIG();
     hc.stack_size         = 8192;
@@ -1173,4 +1179,6 @@ void web_api_start_httpd(void)
     httpd_register_uri_handler(srv, &post_script);
     httpd_register_uri_handler(srv, &del_script);
     httpd_register_uri_handler(srv, &get_diag);
+
+    s_srv = srv;
 }
