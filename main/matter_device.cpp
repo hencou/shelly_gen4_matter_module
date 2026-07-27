@@ -47,7 +47,6 @@ extern "C" {
 #include <platform/PlatformManager.h>
 #include <platform/ThreadStackManager.h>
 #include <platform/ConnectivityManager.h>
-#include <lib/dnssd/platform/Dnssd.h>
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
 #include <platform/ESP32/OpenthreadLauncher.h>
@@ -747,8 +746,6 @@ extern "C" esp_err_t matter_srp_server_start(void)
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
 static esp_timer_handle_t s_addr_log_timer = nullptr;
 static bool s_omr_logged = false;
-static char s_srp_http_instance[64] = {0};
-static bool s_srp_http_logged = false;
 
 static const char *addr_origin_str(uint8_t origin)
 {
@@ -817,48 +814,16 @@ static bool thread_has_omr(void)
     return found;
 }
 
-#if CHIP_DEVICE_CONFIG_ENABLE_THREAD_SRP_CLIENT
-/* Runs on the Matter/CHIP task (via ScheduleWork) so it can never interleave
- * with CHIP's own SRP advertise cycle. ThreadStackMgr().AddSrpService() is the
- * same managed entry point CHIP uses for its operational service: it adds to
- * CHIP's SRP service array (deduped by instance+type, so no "RRset duplicated"
- * collision) and attaches to the SRP host CHIP already registered. CHIP's
- * advertise cycle marks all services invalid and removes the ones it did not
- * re-add, so this must be re-invoked periodically to keep _http._tcp alive; a
- * re-add of an unchanged service is a cheap no-op (just clears the invalid
- * flag, no SRP traffic). */
-static void srp_add_http_service(intptr_t /*arg*/)
-{
-    if (s_srp_http_instance[0] == '\0') {
-        snprintf(s_srp_http_instance, sizeof(s_srp_http_instance), "%s", ota_hostname_get());
-    }
-    chip::Span<const char * const> noSubTypes;
-    chip::Span<const chip::Dnssd::TextEntry> noTxtEntries;
-    CHIP_ERROR err = chip::DeviceLayer::ThreadStackMgr().AddSrpService(
-        s_srp_http_instance, "_http._tcp", 80, noSubTypes, noTxtEntries);
-    if (err == CHIP_NO_ERROR) {
-        if (!s_srp_http_logged) {
-            ESP_LOGW(TAG, "SRP: advertising _http._tcp '%s' (port 80) via CHIP SRP client "
-                          "-- discover with 'dns-sd -B _http._tcp' / avahi-browse; a border "
-                          "router advertising proxy publishes it as LAN mDNS",
-                     s_srp_http_instance);
-            s_srp_http_logged = true;
-        }
-    }
-    /* On error the SRP host is not set up yet (Thread not attached) -- the next
-     * timer tick retries. */
-}
-
-extern "C" void matter_srp_advertise_httpd(void)
-{
-    CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().ScheduleWork(srp_add_http_service, 0);
-    if (err != CHIP_NO_ERROR) {
-        ESP_LOGW(TAG, "SRP: ScheduleWork failed: %" CHIP_ERROR_FORMAT, err.Format());
-    }
-}
-#else
+/* Advertising the management page as an _http._tcp service — whether via a raw
+ * otSrpClientAddService() (PR #160) or via CHIP's managed ThreadStackMgr()
+ * .AddSrpService() (PR #163) — reproduces an "SRP update error: domain name or
+ * RRset is duplicated" storm at the OTBR, after which CHIP restarts the SRP
+ * client every cycle and Matter operational advertising suffers. On top of that
+ * the tested border router does not run an advertising proxy, so an SRP-only
+ * _http._tcp is never published to the LAN as mDNS anyway (avahi-browse stays
+ * empty). Kept as a no-op; reach the page over Thread via the logged OMR IPv6
+ * address (http://[<omr>]/). */
 extern "C" void matter_srp_advertise_httpd(void) {}
-#endif
 
 extern "C" void matter_thread_addr_log_start(void)
 {
@@ -871,9 +836,6 @@ extern "C" void matter_thread_addr_log_start(void)
                 matter_log_thread_addrs();
                 if (thread_has_omr()) s_omr_logged = true;
             }
-            /* Keep (re-)publishing _http._tcp so it survives CHIP's advertise
-             * cycles; cheap no-op once registered. */
-            matter_srp_advertise_httpd();
         },
         .arg = nullptr,
         .dispatch_method = ESP_TIMER_TASK,
@@ -885,7 +847,6 @@ extern "C" void matter_thread_addr_log_start(void)
         ESP_LOGI(TAG, "Thread IPv6 address logger started");
     }
     matter_log_thread_addrs();     /* also log immediately */
-    matter_srp_advertise_httpd();  /* register _http._tcp once the SRP host exists */
 }
 #else
 extern "C" void matter_log_thread_addrs(void) {}
