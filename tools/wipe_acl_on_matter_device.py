@@ -16,9 +16,9 @@ bound to this lamp) and have nothing to do with controller access, so
 this is safe to clean independently of the ACL cleanup.
 
 Example usage:
-    python3 wipe_acl.py                          # connect via default URL
-    python3 wipe_acl.py --ws ws://192.168.1.10:5580/ws --node 3
-    python3 wipe_acl.py --dry-run                # only show, don't write
+    python3 wipe_acl_on_matter_device.py                          # connect via default URL
+    python3 wipe_acl_on_matter_device.py --ws ws://192.168.1.10:5580/ws --node 3
+    python3 wipe_acl_on_matter_device.py --dry-run                # only show, don't write
 
 Dependencies:
     pip install websockets
