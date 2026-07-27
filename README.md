@@ -162,14 +162,14 @@ The image embeds the vendor/product ID and software version; the device only acc
 
 ### 2. Shelly Web UI OTA (zip) — also from stock firmware
 
-Build a zip that the **stock Shelly firmware's** web interface accepts as a local firmware update. This is the initial-install route (no UART):
+Build a zip that the Shelly device web interface accepts as a local firmware update. This works both **from the stock Shelly firmware** (initial install, no UART) and **from this firmware** (updates):
 
 ```bash
 idf.py build
 python3 tools/make-webui-ota-zip.py   # → shelly-gen4-matter-module-v<version>-ota.zip
 ```
 
-Upload the zip via the stock Shelly device's own web interface (local firmware update). The zip's bundled bootloader is marked `min_version 99.0.0`, so the stock updater **replaces the stock Shelly OS loader with the build's own standard ESP-IDF bootloader** at offset `0x0`, on the stock partition layout (PT at `0x10000`). This is what makes later updates reliable: once the ESP-IDF bootloader is in place, updates (`.bin` upload below, or Matter OTA) use the standard ESP-IDF otadata slot select, with no dependency on Shelly's `SH0S` boot-select. Returning to stock afterwards requires the full-chip UART backup.
+Upload the zip via the Shelly device's own web interface (local firmware update). The zip keeps the existing bootloader (its bundled bootloader is marked `min_version 0.0.0`, so nothing at offset `0x0` is overwritten) and uses the stock partition layout (PT at `0x10000`). The firmware migrates the partition table automatically on first boot where needed.
 
 ### 3. `.bin` upload via the management dashboard
 
@@ -296,6 +296,8 @@ The relay functions take an **optional 1-based channel** argument (`1` = relay 1
 | **Configured** (scripts, no fabrics) | OFF | ON (BLE commissioning) | After configuring endpoints + reboot |
 | **Commissioned** (normal) | OFF | ON (Thread active) | After commissioning |
 | **6× press** (management) | ON — APSTA mode | Thread disabled | Press any button 6× rapidly |
+| **WiFi persistent** (setting) | ON — APSTA mode | ON (coexistence) | Toggle in Hardware tab |
+| **WiFi persistent + TBR** | ON — APSTA + TBR | ON (border router) | Toggle both in Hardware tab |
 
 ## Status LED
 
@@ -360,6 +362,7 @@ shelly_gen4_matter_module/
 
 - **Test vendor ID**: firmware uses vendor ID 0xFFF1. For Google/Apple Home publication a CSA vendor ID is required.
 - **Test DAC**: for production, provision real Device Attestation Certificates in the NVS `chip-factory` namespace. For local HA usage the test DAC works fine.
+- **WiFi + Thread coexistence**: ESP32-C6 has one 2.4 GHz radio shared via TDM. When WiFi persistent mode is OFF, Thread is disabled when WiFi is activated via 6× press and resumes on reboot. When WiFi persistent mode is ON, both coexist via software coexistence.
 
 ## License
 
