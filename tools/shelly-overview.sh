@@ -11,23 +11,32 @@
 #
 # Usage:
 #   ./shelly-overview.sh              # scan and open shelly-overview.html
-#   ./shelly-overview.sh --all        # show ALL _http._tcp (not just shelly-*)
+#   ./shelly-overview.sh --all        # show ALL _http._tcp, not just Matter modules
+#   ./shelly-overview.sh --name PFX   # only instance names starting with PFX
 #   ./shelly-overview.sh --no-open    # only generate, do not open
+#
+# By default only Shelly Gen4 Matter modules are shown. They are recognised by
+# their CHIP SRP hostname — an opaque 16-hex-character ".local" name (e.g.
+# 6E4C8E3E56A7E8EE.local) — so the friendly instance name (Kantoor, ...) does
+# not matter and normal LAN web services (printers, receivers, ...) are skipped.
 #
 # Requires: avahi-utils  (sudo apt-get install -y avahi-utils)
 
 set -euo pipefail
 
 OUT="${OUT:-shelly-overview.html}"
-FILTER="shelly"      # only instance names starting with this; empty = all
+MODE="matter"        # matter = CHIP SRP hostname; name = instance prefix; all = everything
+NAME_PREFIX=""
 OPEN=1
 
-for arg in "$@"; do
-  case "$arg" in
-    --all)     FILTER="" ;;
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --all)     MODE="all" ;;
+    --name)    MODE="name"; NAME_PREFIX="${2:-}"; shift ;;
     --no-open) OPEN=0 ;;
-    *) echo "unknown option: $arg" >&2; exit 1 ;;
+    *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
+  shift
 done
 
 if ! command -v avahi-browse >/dev/null 2>&1; then
@@ -51,18 +60,26 @@ seen=";"   # dedup marker: tracks which instance names were already emitted
 while IFS=';' read -r tag iface proto name type domain hostname address port txt; do
   [ "$tag" = "=" ] || continue
   [ -n "$name" ] || continue
-  if [ -n "$FILTER" ]; then
-    case "$name" in "$FILTER"*) ;; *) continue ;; esac
-  fi
+  case "$MODE" in
+    matter)
+      # Shelly Gen4 Matter modules resolve to a CHIP SRP host: 16 hex chars
+      # + ".local" (optional trailing dot). LAN web services do not match.
+      [[ "$hostname" =~ ^[0-9A-Fa-f]{16}\.local\.?$ ]] || continue ;;
+    name)
+      case "$name" in "$NAME_PREFIX"*) ;; *) continue ;; esac ;;
+    all) : ;;
+  esac
   # avahi escapes spaces as \032 etc. — decode the most common one.
   name="${name//\\032/ }"
   # skip if we already have this name (dedup across interfaces/protocols).
   case "$seen" in *";${name};"*) continue ;; esac
   seen="${seen}${name};"
-  # Build URL: IPv6 in [], drop the port when it is 80.
-  case "$proto" in
-    IPv6) host_for_url="[$address]" ;;
-    *)    host_for_url="$address" ;;
+  # Build URL: wrap IPv6 in [], drop the port when it is 80. Decide by the
+  # address itself (a Thread module has only an AAAA record, so even its IPv4
+  # avahi record reports the IPv6 OMR address), not by the proto column.
+  case "$address" in
+    *:*) host_for_url="[$address]" ;;
+    *)   host_for_url="$address" ;;
   esac
   if [ "$port" = "80" ] || [ -z "$port" ]; then
     url="http://${host_for_url}/"
