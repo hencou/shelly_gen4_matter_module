@@ -73,7 +73,7 @@ The Shelly 1 Gen4 has **7 holes in a row** on the back — this is the **J6 conn
 
 You can also install this firmware **directly from the stock Shelly firmware over WiFi**, without opening the device, using a Shelly Web UI OTA zip (`python3 tools/make-webui-ota-zip.py`, uploaded via the Shelly device web interface — see [README.md → Firmware updates](README.md#firmware-updates)).
 
-⚠️ **However, the Web UI OTA route cannot back up the stock Shelly firmware** — it only writes the new app. UART flashing (this section) is the **only** way to read out and save the original 8 MB stock image first. If you might ever want to return to stock, do the UART backup below **before** flashing anything. Restoring stock later also requires UART.
+⚠️ **However, the Web UI OTA route cannot back up the stock Shelly firmware, and it replaces the stock Shelly OS loader with a standard ESP-IDF bootloader** (this is what makes later OTA updates reliable). UART flashing (this section) is the **only** way to read out and save the original 8 MB stock image first, and once the stock loader is gone, restoring stock is only possible from that UART backup. If you might ever want to return to stock, do the UART backup below **before** flashing anything.
 
 > **Note**: the J6 pinout below was verified on hardware revision `v0.1.2`
 > (printed on the PCB).
@@ -306,14 +306,15 @@ Press the button → the lamp should respond directly, **without HA in the path*
 4. The device downloads and flashes the new firmware, then reboots.
 5. For subsequent OTA updates: 6× press suffices — WiFi credentials are saved in NVS.
 
-> **Stock Shelly loader compatibility:** these units keep the proprietary
-> Shelly OS bootloader, which selects the boot slot from its own `SH0S`
-> boot-select record and ignores the standard ESP-IDF otadata. After a
-> successful upload the firmware writes a valid `SH0S` record pointing at the
-> freshly flashed slot, so the stock loader boots the new image while the
-> stock bootloader and the option to return to stock firmware are preserved.
-> The new record is written to the inactive boot-select copy, so the previous
-> image remains bootable if power is lost mid-update.
+> **Bootloader:** this firmware runs under the standard ESP-IDF bootloader. The
+> Web UI OTA package (`tools/make-webui-ota-zip.py`) replaces the stock Shelly OS
+> loader with the build's own ESP-IDF bootloader on install, so from then on the
+> web upload above and Matter OTA both use the standard ESP-IDF otadata slot
+> select — no dependency on Shelly's proprietary `SH0S` boot-select and no
+> risk of the loader reverting to the previous slot. The new image is written to
+> the inactive slot, so the previous image remains bootable if power is lost
+> mid-update. Because the stock loader is gone, returning to stock firmware
+> requires the full-chip UART backup (see section 11).
 
 ## 11. Rollback to stock Shelly firmware
 
