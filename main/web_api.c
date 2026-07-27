@@ -468,6 +468,19 @@ static esp_err_t api_restart_post(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* Restart into WiFi management mode: WiFi comes up (STA or SoftAP) with the
+ * dashboard, Matter/Thread stays down, and after 10 minutes the device reboots
+ * back to Thread mode. Lets a hard-to-reach device be switched to WiFi remotely
+ * over Thread, without the physical 6x button press. */
+static esp_err_t api_wifi_mode_post(httpd_req_t *req)
+{
+    httpd_resp_sendstr(req, "OK");
+    ESP_LOGW(TAG, "Restart to WiFi mode requested via web");
+    vTaskDelay(pdMS_TO_TICKS(500));
+    ota_request_wifi_mode_reboot();
+    return ESP_OK;
+}
+
 static esp_err_t api_factory_reset_post(httpd_req_t *req)
 {
     httpd_resp_sendstr(req, "OK");
@@ -1139,7 +1152,7 @@ void web_api_start_httpd(void)
     hc.recv_wait_timeout  = 30;
     hc.send_wait_timeout  = 10;
     hc.max_open_sockets   = 3;
-    hc.max_uri_handlers   = 19;
+    hc.max_uri_handlers   = 20;
     ESP_ERROR_CHECK(httpd_start(&srv, &hc));
 
     httpd_uri_t get_root          = { "/",                  HTTP_GET,    form_get,              NULL };
@@ -1152,6 +1165,7 @@ void web_api_start_httpd(void)
     httpd_uri_t get_hw_config     = { "/api/hw-config",     HTTP_GET,    api_hw_config_get,     NULL };
     httpd_uri_t post_hw_config    = { "/api/hw-config",     HTTP_POST,   api_hw_config_post,    NULL };
     httpd_uri_t post_restart      = { "/api/restart",       HTTP_POST,   api_restart_post,      NULL };
+    httpd_uri_t post_wifi_mode    = { "/api/wifi-mode",     HTTP_POST,   api_wifi_mode_post,    NULL };
     httpd_uri_t post_factory      = { "/api/factory-reset", HTTP_POST,   api_factory_reset_post,NULL };
     httpd_uri_t post_commission   = { "/api/commission",    HTTP_POST,   api_commission_post,   NULL };
     httpd_uri_t get_backup        = { "/api/backup",        HTTP_GET,    api_backup_get,        NULL };
@@ -1171,6 +1185,7 @@ void web_api_start_httpd(void)
     httpd_register_uri_handler(srv, &get_hw_config);
     httpd_register_uri_handler(srv, &post_hw_config);
     httpd_register_uri_handler(srv, &post_restart);
+    httpd_register_uri_handler(srv, &post_wifi_mode);
     httpd_register_uri_handler(srv, &post_factory);
     httpd_register_uri_handler(srv, &post_commission);
     httpd_register_uri_handler(srv, &get_backup);

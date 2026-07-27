@@ -56,7 +56,8 @@ static const char MGMT_HTML[] =
 "<input id=url placeholder='http://server/shelly1gen4.bin'>"
 "<div style='margin:1em 0'>"
 "<button class='btn btn-green' onclick=doSaveRestart()>Save &amp; Restart</button>"
-"<button class='btn btn-gray' onclick=doRestart()>Restart without saving</button>"
+"<button class='btn btn-gray' onclick=doRestartThread()>Restart to Thread mode</button>"
+"<button class='btn btn-blue' onclick=doRestartWifi()>Restart to WiFi mode</button>"
 "<button class='btn btn-blue' onclick=doCommission()>Commission Mode</button>"
 "<button class='btn btn-red' onclick=doFactory()>Factory Reset</button>"
 "</div>"
@@ -251,13 +252,22 @@ static const char MGMT_HTML[] =
 "  x.send(b);"
 "}"
 
-/* Restart without saving */
-"function doRestart(){"
-"  if(!confirm('Restart device without saving?'))return;"
+/* Restart to Thread mode (normal boot: Matter over Thread) */
+"function doRestartThread(){"
+"  if(!confirm('Restart into Thread mode? The device reboots and runs Matter over Thread.'))return;"
 "  var x=new XMLHttpRequest();"
 "  x.onload=function(){document.getElementById('wifi-msg').innerHTML="
-"    '<span class=ok>Restarting...</span>'};"
+"    '<span class=ok>Restarting into Thread mode...</span>'};"
 "  x.open('POST','/api/restart');x.send();"
+"}"
+
+/* Restart to WiFi mode (WiFi + dashboard for 10 min, then back to Thread) */
+"function doRestartWifi(){"
+"  if(!confirm('Restart into WiFi mode? The device joins WiFi for management and falls back to Thread after 10 minutes.'))return;"
+"  var x=new XMLHttpRequest();"
+"  x.onload=function(){document.getElementById('wifi-msg').innerHTML="
+"    '<span class=ok>Restarting into WiFi mode (10 min, then back to Thread)...</span>'};"
+"  x.open('POST','/api/wifi-mode');x.send();"
 "}"
 
 /* Commission mode */
