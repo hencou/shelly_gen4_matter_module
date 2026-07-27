@@ -170,6 +170,10 @@ For modules already running this firmware: open the management dashboard (**6× 
 
 > Legacy: `tools/make-webui-ota-zip.py` builds a stock-Shelly-1.x web-UI zip. It is unsupported (rejected by stock 2.0) and only relevant for a one-time transition from stock 1.x without UART.
 
+### Updating older modules (partition-table fallback)
+
+Modules that were flashed with an earlier build (via ESPConnect) run our ESP-IDF bootloader with the partition table at `0x8000`, whereas this firmware reads it at `0x10000` (the stock Shelly offset, so newly flashed modules keep the original Shelly partition structure). Those old modules update over the air without reflashing: on first boot after the OTA, `migrate_partition_table_if_needed()` copies the existing partition table from `0x8000` to `0x10000` (a free sector in front of `otadata@0x11000`, so `otadata`/`nvs`/apps are never touched) and continues. No UART, no bootloader rewrite. Newly flashed modules already have a valid table at `0x10000` and skip this.
+
 ## Pin mapping
 
 **Onboard Shelly 1 Gen4:**

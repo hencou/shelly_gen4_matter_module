@@ -54,7 +54,9 @@ CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_PARTITION_TABLE_OFFSET=0x10000
 CONFIG_PARTITION_TABLE_MD5=n
-# Allow writing to reserved flash regions (used by backup/restore tooling).
+# Allow writing to reserved flash regions (backup/restore tooling and the
+# partition-table fallback that copies the table 0x8000 -> 0x10000 on old
+# ESPConnect modules, see migrate_partition_table_if_needed in app_main.cpp).
 CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED=y
 
 # ---------- App-rollback / OTA ----------
