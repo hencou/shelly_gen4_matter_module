@@ -81,10 +81,13 @@ esp_err_t matter_srp_server_start(void);
 void matter_log_thread_addrs(void);
 void matter_thread_addr_log_start(void);
 
-/* No-op: kept for API stability. Advertising an _http._tcp service directly on
- * the OpenThread SRP client collides with CHIP's managed SRP registration
- * ("RRset is duplicated") and destabilises Matter, so the management page is
- * reached over Thread via the logged OMR IPv6 address (http://[<omr>]/). */
+/* Advertise the management page as an _http._tcp service (port 80) so it is
+ * discoverable over the LAN via mDNS. Registration goes through CHIP's managed
+ * SRP path (ThreadStackMgr().AddSrpService) — the same entry point CHIP uses
+ * for its own services — so it shares CHIP's SRP host and does not collide
+ * ("RRset duplicated"). CHIP's advertise cycle drops services it did not
+ * re-add, so this is re-invoked periodically (cheap no-op once registered).
+ * The OMR IPv6 address is still logged as a direct fallback. */
 void matter_srp_advertise_httpd(void);
 
 /* Factory reset → wipes Matter NVS, leaves the fabric, reboot. */
