@@ -310,6 +310,10 @@ static int l_endpoint_set(lua_State *L)
         int val = (int)luaL_checkinteger(L, 2);
         ESP_LOGI(TAG, "slot %d: set measured_value=%d", slot, val);
         matter_update_temperature((int16_t)val);
+    } else if (strcmp(attr, "illuminance") == 0) {
+        double lux = (double)luaL_checknumber(L, 2);
+        ESP_LOGI(TAG, "slot %d: set illuminance=%.1f lux", slot, lux);
+        matter_update_illuminance((float)lux);
     } else if (strcmp(attr, "on_off") == 0) {
         bool val = lua_toboolean(L, 2);
         ESP_LOGI(TAG, "slot %d: set on_off=%d", slot, val);

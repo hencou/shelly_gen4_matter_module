@@ -39,6 +39,8 @@ void matter_send_color_temp_stop(uint16_t local_endpoint_id);
  * These iterate all dynamic endpoints to find matching types. */
 void matter_update_temperature(int16_t centi_c);
 void matter_update_occupancy(bool occupied);
+/* Report illuminance in lux; encoded to Matter MeasuredValue internally. */
+void matter_update_illuminance(float lux);
 
 /* Set a Contact/BooleanState server endpoint (per-slot endpoint id). */
 void matter_update_boolean_state(uint16_t endpoint_id, bool state);
