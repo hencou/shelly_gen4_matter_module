@@ -295,8 +295,6 @@ The relay functions take an **optional 1-based channel** argument (`1` = relay 1
 | **Configured** (scripts, no fabrics) | OFF | ON (BLE commissioning) | After configuring endpoints + reboot |
 | **Commissioned** (normal) | OFF | ON (Thread active) | After commissioning |
 | **6× press** (management) | ON — APSTA mode | Thread disabled | Press any button 6× rapidly |
-| **WiFi persistent** (setting) | ON — APSTA mode | ON (coexistence) | Toggle in Hardware tab |
-| **WiFi persistent + TBR** | ON — APSTA + TBR | ON (border router) | Toggle both in Hardware tab |
 
 ## Status LED
 
@@ -361,7 +359,6 @@ shelly_gen4_matter_module/
 
 - **Test vendor ID**: firmware uses vendor ID 0xFFF1. For Google/Apple Home publication a CSA vendor ID is required.
 - **Test DAC**: for production, provision real Device Attestation Certificates in the NVS `chip-factory` namespace. For local HA usage the test DAC works fine.
-- **WiFi + Thread coexistence**: ESP32-C6 has one 2.4 GHz radio shared via TDM. When WiFi persistent mode is OFF, Thread is disabled when WiFi is activated via 6× press and resumes on reboot. When WiFi persistent mode is ON, both coexist via software coexistence.
 
 ## License
 
