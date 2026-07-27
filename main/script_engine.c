@@ -523,6 +523,14 @@ static void process_button_event(const script_event_t *evt)
     s_last_btn_event = *evt;
     s_btn_event_pending = true;
 
+    /* Maintain the onboard button level (state-following) so that
+     * input.device_btn() reflects pressed/released. The driver emits
+     * CONTACT_CLOSED on every press edge and CONTACT_OPEN on release. */
+    if (evt->input == INPUT_DEVICE_BTN) {
+        if (evt->event == BTN_EVT_CONTACT_CLOSED)      s_device_btn = true;
+        else if (evt->event == BTN_EVT_CONTACT_OPEN)   s_device_btn = false;
+    }
+
     for (int i = 0; i < SCRIPT_MAX_SLOTS; i++) {
         if (s_slots[i].active && s_slots[i].cfg.trigger == TRIGGER_BUTTON_EVENT) {
             run_slot_script(&s_slots[i], i);
