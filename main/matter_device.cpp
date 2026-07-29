@@ -48,6 +48,7 @@ extern "C" {
 #include <app-common/zap-generated/attributes/Accessors.h>
 #include <controller/InvokeInteraction.h>
 #include <credentials/FabricTable.h>
+#include <credentials/GroupDataProvider.h>
 #include <platform/PlatformManager.h>
 #include <platform/ThreadStackManager.h>
 #include <platform/ConnectivityManager.h>
@@ -143,6 +144,62 @@ static auto make_on_error() {
 
 /* ------------- Multicast helpers (no CASE session needed) ------------- */
 
+/* Dump the switch's own group security state for one fabric.  Called when a
+ * multicast Invoke fails so we can see WHY GetKeyContext() returned nullptr
+ * (err=d8 / CHIP_ERROR_NOT_FOUND): missing GroupKeyMap entry, missing KeySet,
+ * or a keyset with no usable key. Reads exactly what GetKeyContext() uses. */
+static void dump_group_state(chip::FabricIndex fabric, chip::GroupId group)
+{
+    using chip::Credentials::GroupDataProvider;
+    GroupDataProvider *p = chip::Credentials::GetGroupDataProvider();
+    if (p == nullptr) {
+        ESP_LOGE(TAG, "  GROUP-DIAG: GroupDataProvider is null");
+        return;
+    }
+
+    ESP_LOGW(TAG, "  GROUP-DIAG fabric=%u group=0x%04X:", fabric, group);
+
+    // GroupKeyMap: group_id -> keyset_id
+    auto *itMap = p->IterateGroupKeys(fabric);
+    if (itMap) {
+        GroupDataProvider::GroupKey gk;
+        bool any = false;
+        while (itMap->Next(gk)) {
+            any = true;
+            ESP_LOGW(TAG, "    GroupKeyMap: group=0x%04X -> keyset=%u", gk.group_id, gk.keyset_id);
+        }
+        if (!any) ESP_LOGE(TAG, "    GroupKeyMap: EMPTY (no group->keyset mapping!)");
+        itMap->Release();
+    } else {
+        ESP_LOGE(TAG, "    GroupKeyMap: iterator null");
+    }
+
+    // KeySets stored for this fabric
+    auto *itKs = p->IterateKeySets(fabric);
+    if (itKs) {
+        GroupDataProvider::KeySet ks;
+        bool any = false;
+        while (itKs->Next(ks)) {
+            any = true;
+            ESP_LOGW(TAG, "    KeySet id=%u num_keys=%u policy=%u",
+                     ks.keyset_id, ks.num_keys_used, (unsigned) ks.policy);
+        }
+        if (!any) ESP_LOGE(TAG, "    KeySet: NONE stored");
+        itKs->Release();
+    } else {
+        ESP_LOGE(TAG, "    KeySet: iterator null");
+    }
+
+    // The exact call the sender makes to encrypt the group message
+    auto *kc = p->GetKeyContext(fabric, group);
+    if (kc) {
+        ESP_LOGW(TAG, "    GetKeyContext: OK (key found)");
+        kc->Release();
+    } else {
+        ESP_LOGE(TAG, "    GetKeyContext: NULL -> this is the err=d8 cause");
+    }
+}
+
 static void send_onoff_multicast(const BindingCommandData &d, const Binding::TableEntry &b)
 {
     auto *em = &chip::Server::GetInstance().GetExchangeManager();
@@ -160,6 +217,7 @@ static void send_onoff_multicast(const BindingCommandData &d, const Binding::Tab
     if (err != CHIP_NO_ERROR) {
         ESP_LOGE(TAG, "send_onoff_multicast FAILED: fabric=%u group=0x%04X cmd=0x%lx err=%" CHIP_ERROR_FORMAT,
                  b.fabricIndex, b.groupId, (unsigned long)d.commandId, err.Format());
+        dump_group_state(b.fabricIndex, b.groupId);
     } else {
         ESP_LOGI(TAG, "send_onoff_multicast OK: fabric=%u group=0x%04X cmd=0x%lx",
                  b.fabricIndex, b.groupId, (unsigned long)d.commandId);
