@@ -481,6 +481,27 @@ async def run_logic(args):
             except Exception as e:
                 print(f"    [!] Could not read binding: {e}")
 
+            # The switch must ALSO have its own GroupKeyMap (group -> keyset)
+            # and the KeySet installed, otherwise it cannot ENCRYPT the outgoing
+            # multicast and the firmware logs 'send_onoff_multicast FAILED err=d8'
+            # (CHIP_ERROR_NOT_FOUND from GroupDataProvider::GetKeyContext).
+            try:
+                gkm = await client.send_command("read_attribute", {
+                    "node_id": sw,
+                    "attribute_path": "0/63/0"
+                })
+                print(f"    Switch GroupKeyMap (0/63/0): {json.dumps(gkm)}")
+            except Exception as e:
+                print(f"    [!] Could not read switch GroupKeyMap: {e}")
+            try:
+                idx = await client.send_command("device_command", {
+                    "node_id": sw, "endpoint_id": 0, "cluster_id": 63,
+                    "command_name": "KeySetReadAllIndices", "payload": {}
+                })
+                print(f"    Switch KeySet indices: {idx}")
+            except Exception as e:
+                print(f"    [!] Could not read switch KeySet indices: {e}")
+
         print("\n" + "="*60)
         print("[*] SCRIPT COMPLETE!")
         print("="*60)
