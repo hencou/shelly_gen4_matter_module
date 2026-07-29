@@ -200,8 +200,30 @@ static void dump_group_state(chip::FabricIndex fabric, chip::GroupId group)
     }
 }
 
+/* The SENDER must also have the group registered in its own GroupInfo table:
+ * SessionManager::PrepareMessage calls GetGroupInfo() to build the multicast
+ * address, and returns CHIP_ERROR_NOT_FOUND (err=d8) if it's missing.  The
+ * setup script only runs Groups::AddGroup on the lamps, never on the switch,
+ * so we register the group here (idempotent).  Uses default flags = per-group
+ * multicast address, matching the lamp's AddGroup entry. */
+static void ensure_group_info(chip::FabricIndex fabric, chip::GroupId group)
+{
+    using chip::Credentials::GroupDataProvider;
+    GroupDataProvider *p = chip::Credentials::GetGroupDataProvider();
+    if (p == nullptr) return;
+
+    GroupDataProvider::GroupInfo info;
+    if (p->GetGroupInfo(fabric, group, info) == CHIP_NO_ERROR) return;  // already present
+
+    GroupDataProvider::GroupInfo newInfo(group, "grp");
+    CHIP_ERROR err = p->SetGroupInfo(fabric, newInfo);
+    ESP_LOGI(TAG, "ensure_group_info: register group 0x%04X fabric=%u -> err=%" CHIP_ERROR_FORMAT,
+             group, fabric, err.Format());
+}
+
 static void send_onoff_multicast(const BindingCommandData &d, const Binding::TableEntry &b)
 {
+    ensure_group_info(b.fabricIndex, b.groupId);
     auto *em = &chip::Server::GetInstance().GetExchangeManager();
     CHIP_ERROR err = CHIP_NO_ERROR;
     if (d.commandId == OnOff::Commands::Toggle::Id) {
@@ -226,6 +248,7 @@ static void send_onoff_multicast(const BindingCommandData &d, const Binding::Tab
 
 static void send_level_multicast(const BindingCommandData &d, const Binding::TableEntry &b)
 {
+    ensure_group_info(b.fabricIndex, b.groupId);
     auto *em = &chip::Server::GetInstance().GetExchangeManager();
     CHIP_ERROR err = CHIP_NO_ERROR;
     if (d.commandId == LevelControl::Commands::MoveWithOnOff::Id) {
@@ -254,6 +277,7 @@ static void send_level_multicast(const BindingCommandData &d, const Binding::Tab
 
 static void send_colorcontrol_multicast(const BindingCommandData &d, const Binding::TableEntry &b)
 {
+    ensure_group_info(b.fabricIndex, b.groupId);
     auto *em = &chip::Server::GetInstance().GetExchangeManager();
     CHIP_ERROR err = CHIP_NO_ERROR;
     if (d.commandId == ColorControl::Commands::MoveToColorTemperature::Id) {
