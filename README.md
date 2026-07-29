@@ -144,24 +144,24 @@ operational-discovery query a Thread node makes for another node — so a freshl
 reset/commissioned switch times out while resolving the lamp, even though the
 lamp is reachable and works from Home Assistant.
 
-To make the mesh self-sufficient, a module can run its own SRP / DNS-SD server:
-
-- Enable **`srp_mode`** on the **WiFi & OTA** tab (stored in NVS, applied after a
-  reboot once the device is commissioned).
-- The server runs only as a **fallback**: it yields immediately to any real
-  Thread border router (which also bridges LAN mDNS for Home Assistant). It
-  activates only after ~30–60 s with no border router present.
-- **Safe to enable on multiple modules.** When several fallback candidates are
-  present, they elect a single active server — the one with the lowest Thread
-  RLOC16 wins, the rest yield. A per-node random start delay staggers activation
-  and hysteresis prevents on/off flapping, so they don't keep toggling each
-  other. In practice exactly one module serves at a time.
-
-Once a module serves SRP/DNS-SD, other Thread nodes (including your switches)
-resolve peers through it, so direct bindings work independently of the border
-router. Note a fallback server has no advertising proxy, so while it is the only
-server, off-mesh controllers (Home Assistant) cannot discover the mesh — keep a
-border router online for that.
+> **Not available on this SDK.** Running an on-device SRP / DNS-SD *server*
+> requires `CONFIG_OPENTHREAD_BORDER_ROUTER=y`, which on ESP-IDF v5.5.4 wires
+> the ESP border-router glue. After commissioning, the Thread stack calls
+> `otThreadSetEnabled(true)` (only when a dataset is stored), which hangs on a
+> Thread-only device that has no infra/backbone interface — the module never
+> boots past Thread attach on any reboot after commissioning. The prebuilt
+> `libopenthread_br.a` cannot be slimmed either (its MeshCoP mDNS publisher
+> references `otBackboneRouterGetState` / `otBorderRoutingGetOmrPrefix`
+> unconditionally). Therefore `CONFIG_OPENTHREAD_BORDER_ROUTER` is kept **off**
+> and the `srp_mode` fallback-server code is compiled out. The election logic
+> (`matter_srp_server_*`) is retained behind `#if CONFIG_OPENTHREAD_BORDER_ROUTER`
+> for a future SDK that can run the SRP server without a backbone interface.
+>
+> To make freshly reset/commissioned switches resolve lamps for direct bindings,
+> add a real Thread border router with an advertising proxy that answers
+> operational-discovery queries (e.g. a Home Assistant OpenThread Border Router
+> on a ZBT-1/SkyConnect dongle or HA Yellow). Alternatively, drive the lamp from
+> a controller (Home Assistant automation), which needs no on-device resolve.
 
 #### Switch to WiFi for faster management
 

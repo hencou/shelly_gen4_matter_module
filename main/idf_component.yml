@@ -5,7 +5,3 @@ dependencies:
     version: ">=5.2"
   espressif/mdns:
     version: "*"
-  # Required by esp-matter's chip CMake when CONFIG_OPENTHREAD_BORDER_ROUTER=y
-  # (referenced for RCP update even though we use the native 802.15.4 radio).
-  espressif/esp_rcp_update:
-    version: "*"
