@@ -200,9 +200,14 @@ async def run_logic(args):
         print("\n" + "-"*50)
         print(f"[STEP 2] Writing GroupKeyMap (group -> keyset {GROUP_KEYSET_ID})...")
 
+        # GroupKeyMapStruct uses integer TLV tag keys — string field names
+        # ("groupId"/"groupKeySetID") get silently zeroed by the device, so
+        # the write appears to succeed but the readback stays empty (exactly
+        # like the ACL and binding structs). "1" = groupId, "2" = groupKeySetID
+        # ("254" = fabricIndex, auto-filled by the server).
         group_key_entry = {
-            "groupId": args.group_id,
-            "groupKeySetID": GROUP_KEYSET_ID,
+            "1": args.group_id,
+            "2": GROUP_KEYSET_ID,
         }
 
         for node_id in all_nodes:
