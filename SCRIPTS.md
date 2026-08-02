@@ -285,6 +285,64 @@ end
 
 ---
 
+### Electrical power measurement (energy)
+
+Expose a power reading to Home Assistant via the Matter **Electrical Power
+Measurement** cluster (`ActivePower`, plus optional `Voltage`, `ActiveCurrent`
+and `Frequency`). Use an **Electrical Power Measurement (server)** slot.
+
+Two forms of `endpoint.set`:
+
+- `endpoint.set("power", watts)` — sets **ActivePower** only (watts). Leaves
+  voltage/current/frequency unchanged.
+- `endpoint.set("power", { power = W, voltage = V, current = A, frequency = Hz })`
+  — sets any subset; omitted fields are left unchanged.
+
+Units are the natural ones (W / V / A / Hz); the firmware scales them to the
+Matter mW/mV/mA/mHz representation internally.
+
+| Setting | Value |
+|---|---|
+| Endpoint Type | Electrical Power Measurement (server) |
+| Trigger | Periodic |
+| Period | 2000 (2 seconds) |
+
+Example — report power derived from the analog input (0–100 % → 0–3680 W, i.e.
+a 16 A / 230 V circuit) plus a fixed mains voltage:
+
+```lua
+local max_w = 3680          -- 16 A @ 230 V
+local mains_v = 230
+
+function run()
+  local duty = input.analog()               -- 0..100 %
+  local watts = duty / 100 * max_w
+  endpoint.set("power", {
+    power   = watts,
+    voltage = mains_v,
+    current = watts / mains_v,
+  })
+  log("power=" .. math.floor(watts) .. " W")
+end
+```
+
+Minimal variant (ActivePower only):
+
+```lua
+function run()
+  endpoint.set("power", input.analog() / 100 * 3680)
+end
+```
+
+> Note: on the **1PM Gen4 (BL0942)** and **2PM Gen4 (ADE7953)** the built-in
+> metering already creates its own Electrical Power Measurement endpoint(s)
+> straight from the hardware — you do **not** need a Lua slot for those. This
+> slot type is for exposing a power value you compute or read yourself (e.g.
+> from an external sensor via the analog input) on models without onboard
+> metering.
+
+---
+
 ## 8. Multi-input script (different behavior per button)
 
 Use `input.button_id()` to distinguish which physical input triggered the event.
@@ -468,6 +526,8 @@ Relay functions take an optional 1-based channel (`1`=relay 1, `2`=relay 2 on th
 - `endpoint.set("occupied", bool)` — occupancy
 - `endpoint.set("state", bool)` — Contact Sensor (BooleanState) state
 - `endpoint.set("on_off", bool)` — relay OnOff state
+- `endpoint.set("power", watts)` — Electrical Power Measurement, ActivePower only (W)
+- `endpoint.set("power", { power=, voltage=, current=, frequency= })` — any subset (W / V / A / Hz)
 
 ### Utilities
 - `log(msg)` — print to serial log

@@ -635,24 +635,47 @@ extern "C" void matter_update_boolean_state(uint16_t endpoint_id, bool state)
                       BooleanState::Attributes::StateValue::Id, &v);
 }
 
+/* Write the four ElectricalPowerMeasurement attributes on a given endpoint.
+ * Matter units: mW / mV / mA / mHz. These attributes are nullable int64.
+ * The ElectricalPowerMeasurement cluster is created dynamically (not in the
+ * static ZAP config), so no generated Get/Set accessors exist — use the
+ * esp-matter attribute store update path (locks the stack internally). */
+static void write_power_attrs(uint16_t ep, float voltage_v, float current_a,
+                              float power_w, float frequency_hz)
+{
+    if (!ep) return;
+    namespace EPM = chip::app::Clusters::ElectricalPowerMeasurement;
+    /* NaN means "leave this attribute unchanged" (Lua may report power only). */
+    if (!std::isnan(power_w)) {
+        esp_matter_attr_val_t v = esp_matter_nullable_int64(nullable<int64_t>((int64_t)(power_w * 1000.0f)));
+        attribute::update(ep, EPM::Id, EPM::Attributes::ActivePower::Id, &v);
+    }
+    if (!std::isnan(voltage_v)) {
+        esp_matter_attr_val_t v = esp_matter_nullable_int64(nullable<int64_t>((int64_t)(voltage_v * 1000.0f)));
+        attribute::update(ep, EPM::Id, EPM::Attributes::Voltage::Id, &v);
+    }
+    if (!std::isnan(current_a)) {
+        esp_matter_attr_val_t v = esp_matter_nullable_int64(nullable<int64_t>((int64_t)(current_a * 1000.0f)));
+        attribute::update(ep, EPM::Id, EPM::Attributes::ActiveCurrent::Id, &v);
+    }
+    if (!std::isnan(frequency_hz)) {
+        esp_matter_attr_val_t v = esp_matter_nullable_int64(nullable<int64_t>((int64_t)(frequency_hz * 1000.0f)));
+        attribute::update(ep, EPM::Id, EPM::Attributes::Frequency::Id, &v);
+    }
+}
+
 extern "C" void matter_update_power_ch(int ch, float voltage_v, float current_a,
                                        float power_w, float frequency_hz)
 {
     if (ch < 0 || ch > 1 || !s_pm_endpoint[ch]) return;
-    uint16_t ep = s_pm_endpoint[ch];
-    namespace EPM = chip::app::Clusters::ElectricalPowerMeasurement;
-    /* Matter units: mW / mV / mA / mHz. These attributes are nullable int64.
-     * The ElectricalPowerMeasurement cluster is created dynamically (not in the
-     * static ZAP config), so no generated Get/Set accessors exist — use the
-     * esp-matter attribute store update path (locks the stack internally). */
-    esp_matter_attr_val_t vp = esp_matter_nullable_int64(nullable<int64_t>((int64_t)(power_w      * 1000.0f)));
-    esp_matter_attr_val_t vv = esp_matter_nullable_int64(nullable<int64_t>((int64_t)(voltage_v    * 1000.0f)));
-    esp_matter_attr_val_t vc = esp_matter_nullable_int64(nullable<int64_t>((int64_t)(current_a    * 1000.0f)));
-    esp_matter_attr_val_t vf = esp_matter_nullable_int64(nullable<int64_t>((int64_t)(frequency_hz * 1000.0f)));
-    attribute::update(ep, EPM::Id, EPM::Attributes::ActivePower::Id,   &vp);
-    attribute::update(ep, EPM::Id, EPM::Attributes::Voltage::Id,       &vv);
-    attribute::update(ep, EPM::Id, EPM::Attributes::ActiveCurrent::Id, &vc);
-    attribute::update(ep, EPM::Id, EPM::Attributes::Frequency::Id,     &vf);
+    write_power_attrs(s_pm_endpoint[ch], voltage_v, current_a, power_w, frequency_hz);
+}
+
+extern "C" void matter_update_power_ep(uint16_t endpoint_id, float voltage_v, float current_a,
+                                       float power_w, float frequency_hz)
+{
+    /* Lua-driven SLOT_TYPE_POWER endpoint: write straight to the slot's own EP. */
+    write_power_attrs(endpoint_id, voltage_v, current_a, power_w, frequency_hz);
 }
 
 extern "C" void matter_update_power(float voltage_v, float current_a,
@@ -1303,6 +1326,23 @@ static endpoint_t *create_endpoint_for_type(node_t *node, script_slot_type_t typ
                                       ATTRIBUTE_FLAG_NULLABLE, esp_matter_nullable_uint16(nullable<uint16_t>(0xFFFE)));
         return ep;
     }
+    case SLOT_TYPE_POWER: {
+        /* Electrical Sensor device with an ElectricalPowerMeasurement cluster,
+         * driven from Lua via matter_update_power_ep(). electrical_sensor::create
+         * sets up descriptor + power_topology + the mandatory ActivePower
+         * attribute; the optional Voltage/ActiveCurrent/Frequency attributes are
+         * added here so Lua can report them too (all nullable int64, mW/mV/mA/mHz). */
+        electrical_sensor::config_t pm_cfg;
+        endpoint_t *ep = electrical_sensor::create(node, &pm_cfg, ENDPOINT_FLAG_NONE, NULL);
+        if (!ep) return NULL;
+        cluster_t *epm = cluster::get(ep, ElectricalPowerMeasurement::Id);
+        if (epm) {
+            electrical_power_measurement::attribute::create_voltage(epm, nullable<int64_t>());
+            electrical_power_measurement::attribute::create_active_current(epm, nullable<int64_t>());
+            electrical_power_measurement::attribute::create_frequency(epm, nullable<int64_t>());
+        }
+        return ep;
+    }
     default:
         return NULL;
     }
@@ -1320,6 +1360,7 @@ static const char *slot_type_name(script_slot_type_t type)
     case SLOT_TYPE_RELAY2:       return "OnOff Light (relay 2)";
     case SLOT_TYPE_CONTACT:      return "Contact Sensor (BooleanState)";
     case SLOT_TYPE_ILLUMINANCE:  return "Illuminance Sensor";
+    case SLOT_TYPE_POWER:        return "Electrical Power Measurement";
     default:                     return "Unknown";
     }
 }

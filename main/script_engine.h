@@ -36,6 +36,7 @@ typedef enum {
     SLOT_TYPE_RELAY,              /* OnOff Light Server — controls internal relay (ch 1) */
     SLOT_TYPE_RELAY2,             /* OnOff Light Server — controls internal relay 2 (2PM) */
     SLOT_TYPE_CONTACT,            /* BooleanState Server — binary/contact state set from Lua */
+    SLOT_TYPE_POWER,              /* ElectricalPowerMeasurement Server — power/voltage/current set from Lua */
 } script_slot_type_t;
 
 /* Script execution trigger */

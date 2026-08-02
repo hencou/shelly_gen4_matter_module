@@ -323,6 +323,22 @@ static int l_endpoint_set(lua_State *L)
         uint16_t ep = s_slots[slot].endpoint_id;
         ESP_LOGI(TAG, "slot %d: set state=%d ep=%u", slot, val, ep);
         matter_update_boolean_state(ep, val);
+    } else if (strcmp(attr, "power") == 0 || strcmp(attr, "active_power") == 0) {
+        /* Electrical Power Measurement. Scalar arg sets ActivePower (W) only;
+         * table arg {power=, voltage=, current=, frequency=} sets any subset.
+         * NAN = leave that attribute unchanged. Units: W / V / A / Hz. */
+        float p = NAN, v = NAN, c = NAN, f = NAN;
+        if (lua_istable(L, 2)) {
+            lua_getfield(L, 2, "power");     if (!lua_isnil(L, -1)) p = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+            lua_getfield(L, 2, "voltage");   if (!lua_isnil(L, -1)) v = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+            lua_getfield(L, 2, "current");   if (!lua_isnil(L, -1)) c = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+            lua_getfield(L, 2, "frequency"); if (!lua_isnil(L, -1)) f = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+        } else {
+            p = (float)luaL_checknumber(L, 2);
+        }
+        uint16_t ep = s_slots[slot].endpoint_id;
+        ESP_LOGI(TAG, "slot %d: set power=%.1fW ep=%u", slot, p, ep);
+        matter_update_power_ep(ep, v, c, p, f);
     } else {
         ESP_LOGW(TAG, "slot %d: unknown attr '%s'", slot, attr);
     }
