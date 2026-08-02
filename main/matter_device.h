@@ -56,6 +56,11 @@ void matter_update_power_ch(int ch, float voltage_v, float current_a,
 void matter_update_power(float voltage_v, float current_a,
                          float power_w, float frequency_hz);
 
+/* Update a Lua-driven SLOT_TYPE_POWER endpoint (per-slot endpoint id).
+ * Same units/scaling as matter_update_power_ch. No-op when endpoint_id is 0. */
+void matter_update_power_ep(uint16_t endpoint_id, float voltage_v, float current_a,
+                            float power_w, float frequency_hz);
+
 /* Update relay OnOff attribute (report to HA). ch = 0-based relay channel. */
 void matter_update_relay_onoff(int ch, bool on);
 
