@@ -8,14 +8,23 @@
 #     python3 tools/make-webui-ota-zip.py /path/to/shelly_gen4_matter_module
 #
 # It reads the project name and version from build/project_description.json,
-# pulls the bootloader, partition table, otadata and app from build/, adds an
-# empty filesystem image, and writes shelly-gen4-matter-module-v<version>-ota.zip.
+# pulls the bootloader, partition table and app from build/, adds an empty
+# filesystem image, and writes shelly-gen4-matter-module-v<version>-ota.zip.
 #
-# Every part in the zip comes from the build; no Shelly binaries are included.
-# Shelly's OTA requires a boot part; the zip includes the bootloader with
-# min_version 0.0.0. The device reads that as 0.0.0 and keeps its existing
-# bootloader rather than flashing the bundled one, so nothing at offset 0x0
-# is overwritten.
+# STOCK-LOADER MODE: this package PRESERVES the stock Shelly OS loader.
+#  - The boot part carries min_version 0.0.0, so the stock updater reads the
+#    bundled bootloader as older than its own and keeps the stock loader at
+#    offset 0x0 (nothing there is overwritten).
+#  - No otadata part is shipped. The stock loader uses its own "SH0S" boot-
+#    select record in the otadata partition; overwriting it with the ESP-IDF
+#    otadata format would leave the loader with no valid record. The running
+#    firmware maintains SH0S at runtime (see main/shelly_boot.c) after OTA.
+#
+# NOTE: the exact slot the stock v2.0 web updater flashes into and how it
+# rewrites SH0S on accept are NOT yet confirmed from a real stock v2.0 OTA
+# zip + manifest.json. Until that is verified against hardware, treat the
+# initial web-UI install path as unproven; the proven part is runtime SH0S
+# switching for OTA between our own versions and Matter OTA.
 #
 import datetime, hashlib, json, os, sys, tempfile, zipfile
 
@@ -26,12 +35,10 @@ PLATFORM     = "esp32c6"
 # Kept above any stock version; the device never refuses it as a downgrade.
 # The real firmware version is in the app and the zip filename, not here.
 MANIFEST_VER = "99.0.0"
-# LEGACY / UNSUPPORTED path. The supported install route is a one-time UART
-# flash (see INSTALL.md); this zip only exists for stock Shelly 1.x web-UI
-# installs and is rejected by stock 2.0. BOOT_MIN forces the stock updater to
-# replace its own OS loader with our ESP-IDF bootloader (otherwise the stock
-# loader would keep control and revert to stock firmware).
-BOOT_MIN     = "99.0.0"
+# Keep the stock OS loader: a min_version of 0.0.0 is read by the stock updater
+# as older than its own loader, so it keeps the stock loader at offset 0x0 and
+# does NOT flash our bundled bootloader over it.
+BOOT_MIN     = "0.0.0"
 # Must match the stock Shelly 1 Gen4 partition layout.
 PT_ADDR  = 0x10000
 NVS_SIZE = 0xC000
@@ -58,7 +65,6 @@ def main():
     src = {
         "bootloader.bin":      os.path.join(build, "bootloader", "bootloader.bin"),
         "partition-table.bin": os.path.join(build, "partition_table", "partition-table.bin"),
-        "otadata.bin":         os.path.join(build, "ota_data_initial.bin"),
         "app.bin":             os.path.join(build, f"{project_name}.bin"),
     }
     missing = [p for p in src.values() if not os.path.isfile(p)]
@@ -88,7 +94,6 @@ def main():
             "parts": {
                 "boot":    part("bootloader.bin", type="boot", addr=0x0, min_version=BOOT_MIN, encrypt=ENCRYPT),
                 "pt":      part("partition-table.bin", type="pt", addr=PT_ADDR, encrypt=ENCRYPT),
-                "otadata": part("otadata.bin", type="otadata", ptn="otadata", encrypt=ENCRYPT),
                 "nvs":     {"type": "nvs", "size": NVS_SIZE, "fill": 255, "ptn": "nvs"},
                 "app":     part("app.bin", type="app", ptn="app_0", encrypt=ENCRYPT),
                 "fs":      part("fs.img", type="fs", ptn="fs_0", fs_size=FS_SIZE, encrypt=ENCRYPT),
@@ -100,7 +105,7 @@ def main():
             json.dump(manifest, f, indent=2)
 
         order = ["manifest.json", "bootloader.bin", "partition-table.bin",
-                 "otadata.bin", "app.bin", "fs.img"]
+                 "app.bin", "fs.img"]
         src_for = {**paths, "manifest.json": manifest_path}
         with zipfile.ZipFile(zip_out, "w", zipfile.ZIP_STORED) as z:
             for member in order:

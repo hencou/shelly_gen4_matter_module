@@ -26,6 +26,9 @@ extern "C" {
 #include "hw_config.h"
 #include "relay.h"
 #include "ota.h"
+#include "shelly_boot.h"
+#include "esp_ota_ops.h"
+#include "esp_partition.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_system.h"
@@ -96,6 +99,22 @@ using namespace esp_matter::cluster;
 using namespace esp_matter::endpoint;
 using namespace chip;
 using namespace chip::app::Clusters;
+
+/* Mirror the Matter OTA requestor's applied slot into the stock loader's SH0S
+ * boot-select. Runs on the CHIP task when the OTA image has been applied. */
+static void shelly_ota_apply_handler(const chip::DeviceLayer::ChipDeviceEvent *event,
+                                     intptr_t /*arg*/)
+{
+    if (event->Type != chip::DeviceLayer::DeviceEventType::kOtaStateChanged) return;
+    if (event->OtaStateChanged.newState != chip::DeviceLayer::kOtaApplyComplete) return;
+
+    const esp_partition_t *boot = esp_ota_get_boot_partition();
+    if (!boot) return;
+    int slot = (int)boot->subtype - (int)ESP_PARTITION_SUBTYPE_APP_OTA_MIN;
+    esp_err_t se = shelly_boot_switch_slot(slot);
+    ESP_LOGI(TAG, "Matter OTA apply: SH0S boot-select app_%d -> %s",
+             slot, esp_err_to_name(se));
+}
 
 /* Dynamic endpoint tracking — indexed by script slot */
 static uint16_t s_slot_endpoints[SCRIPT_MAX_SLOTS] = {0};
@@ -1422,6 +1441,13 @@ extern "C" esp_err_t matter_start(const script_slot_type_t *slot_types, uint8_t 
 
     /* OTA cluster requestor */
     esp_matter_ota_requestor_init();
+
+    /* The Matter OTA requestor applies images with esp_ota_set_boot_partition(),
+     * which writes the ESP-IDF otadata format and thereby overwrites the stock
+     * loader's SH0S boot-select. Once the image is applied (but before the
+     * requestor reboots) mirror the new slot back into a valid SH0S so the
+     * stock loader actually boots the freshly downloaded image. */
+    chip::DeviceLayer::PlatformMgr().AddEventHandler(shelly_ota_apply_handler, 0);
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     esp_openthread_platform_config_t ot_cfg = {

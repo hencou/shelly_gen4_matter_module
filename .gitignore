@@ -4,6 +4,8 @@ main/secrets.h
 # Build output
 build/
 managed_components/
+sdkconfig
+dependencies.lock
 
 # IDE
 .vscode/

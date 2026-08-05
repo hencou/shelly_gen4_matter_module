@@ -24,6 +24,7 @@ extern "C" {
 #include "power_meter.h"
 #include "ade7953.h"
 #include "ota.h"
+#include "shelly_boot.h"
 #include "status_led.h"
 #include "script_engine.h"
 #include "web_api.h"
@@ -89,6 +90,11 @@ extern "C" void app_main(void)
      * Done before the (possibly slow) nvs/Matter init and without an extra
      * reboot, so the rollback window is not left open. */
     ota_mark_app_valid();
+
+    /* Cache the stock loader's SH0S boot-select so OTA (incl. the Matter OTA
+     * requestor, which overwrites the live otadata) can still rebuild a valid
+     * entry for the stock loader. No-op on IDF-bootloader builds. */
+    shelly_boot_snapshot();
 
     ESP_ERROR_CHECK(nvs_flash_init());
 
