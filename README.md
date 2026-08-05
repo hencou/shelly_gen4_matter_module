@@ -109,9 +109,19 @@ only writes `nvs`, `app` and `fs` — and the firmware then manages the stock
 `SH0S` boot-select so the module boots our app. This is the only way to install
 on a **Shelly 1 Mini Gen4**, which has no accessible UART pads.
 
-> ✅ Verified on a **Shelly 1 Gen4** updating from stock **v2.0**. The layout is
-> identical on stock 1.5/1.7/2.0 (same offsets, same SH0S structure), so it is
-> expected to work there too, but that has not been individually hardware-tested.
+> ⚠️ **Update the device to stock Shelly v2.0 first, then flash our package.**
+> Fresh units often ship as a *dual-variant* build with a Matter app (`S1G4`) in
+> one slot and a Zigbee app (`S1G4ZB`) in the other. Stock 2.0 has a firmware
+> **variant guard** (`shelly_alternative.c: Not switching fw variant`) that
+> refuses to boot a foreign app on such a unit, so the install appears to "revert
+> to stock". Running the normal stock **1.5.x → 2.0** update first collapses the
+> unit to a single Matter variant (both slots `S1G4`), after which our web-UI
+> package installs correctly. Do the stock 2.0 update, reboot, *then* upload our
+> `.zip`.
+
+> ✅ Verified on a **Shelly 1 Gen4** on stock **v2.0** (both after a factory-2.0
+> unit was updated 1.5.99 → 2.0, and on a unit already running 2.0). The layout is
+> identical on stock 1.5/1.7/2.0 (same offsets, same SH0S structure).
 > Keep a full backup before flashing (see the warning under
 > [Firmware updates](#firmware-updates)).
 
@@ -218,13 +228,17 @@ After factory reset the module reboots into WiFi setup mode (step 2).
 
 Once the custom firmware is running you can update it three ways. They all flash the **same** application binary (`build/shelly_gen4_matter_module.bin`) — they only differ in transport, and all use standard ESP-IDF OTA slot selection with bootloader rollback (a bad image is automatically reverted to the previous slot).
 
-> ⚠️ **Return to stock: restore your full UART backup.** There is no built-in
-> over-the-air path back to stock Shelly firmware. The reliable way back is
-> restoring the full 8 MB UART backup of that exact device, so make that backup
-> **before** the first flash (with [ESPConnect](https://thelastoutpostworkshop.github.io/microcontroller_devkit/espconnect/)
-> or `esptool.py read_flash`, see [INSTALL.md](INSTALL.md)) — afterwards it is too
-> late. The factory `shelly` partition (hardware/Matter credentials) is never
-> overwritten and is preserved across installs.
+> ⚠️ **Keep a full UART backup as your guaranteed way back.** The management
+> page can flash an original Shelly firmware package back onto the device (see
+> [Return to stock](#4-return-to-stock-shelly-firmware) below), but that path is
+> **not hardware-tested** and only works on units that still carry the stock
+> loader (i.e. installed via the web-UI package). The one route that always
+> works is restoring the full 8 MB UART backup of that exact device, so make
+> that backup **before** the first flash (with
+> [ESPConnect](https://thelastoutpostworkshop.github.io/microcontroller_devkit/espconnect/)
+> or `esptool.py read_flash`, see [INSTALL.md](INSTALL.md)) — afterwards it is
+> too late. The factory `shelly` partition (hardware/Matter credentials) is
+> never overwritten and is preserved across installs.
 
 ### 1. Matter OTA (over Thread)
 
@@ -253,6 +267,25 @@ python3 tools/make-webui-ota-zip.py     # → shelly-gen4-matter-module-v<versio
 ```
 
 The package ships no partition table and no bootloader downgrade (`min_version 0.0.0`), so it keeps the device's own stock partition table and OS loader and only writes `nvs`, `app` and `fs`. The firmware then rewrites the stock `SH0S` boot-select record so the module boots the new app instead of reverting to stock. This is the route used for the very first install from stock Shelly firmware (see [First flash](#1-first-flash)) and works regardless of whether the unit runs stock 1.5/1.7/2.0.
+
+> **Install from stock: update to stock v2.0 first.** On a factory unit that still
+> carries the dual-variant layout (`S1G4` Matter + `S1G4ZB` Zigbee), stock 2.0's
+> variant guard refuses to switch to a foreign app and the module keeps booting
+> stock. Run the stock **1.5.x → 2.0** update first (collapses it to a single
+> `S1G4` variant), reboot, then upload this package. See the warning under
+> [First flash](#1-first-flash).
+
+### 4. Return to stock Shelly firmware
+
+The management dashboard (**Backup** tab) can flash an **original Shelly firmware package** back onto the module — the same `.zip` the stock web UI consumes. Download the package matching the model on your device label from the [community firmware archive](https://archive.shelly-tools.de/) (e.g. `S4SW-001X16EU` = Shelly 1 Gen4), then upload it under *Return to stock Shelly firmware*.
+
+The firmware writes the stock **app** to the inactive slot and the stock **filesystem**, verifies their SHA-256, and only then points the stock `SH0S` boot-select at the new slot and reboots into stock. Because the running firmware performs the write, transparent flash encryption applies, so this works on encrypted v2.0 units too. It never touches the bootloader or the factory `shelly` partition (both parts are deliberately skipped from the package), and a failed/aborted upload leaves the running slot untouched.
+
+> ⚠️ **This path is not hardware-tested.** It only works on units that still
+> carry the stock Shelly OS loader — i.e. that were installed via the web-UI
+> package (§3), not via a UART reflash that replaced the loader. If the device
+> is not on the stock loader the upload is refused. Keep your full 8 MB UART
+> backup as the guaranteed fallback.
 
 ### Older modules need a one-time UART reflash
 

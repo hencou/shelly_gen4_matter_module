@@ -80,6 +80,12 @@ The Shelly 1 Gen4 has **7 holes in a row** on the back — this is the **J6 conn
 > below is still recommended when you want to make a full 8 MB backup for a
 > guaranteed return to stock.
 >
+> **First update the device to stock Shelly v2.0, then flash our package.**
+> Factory units can ship as a dual-variant build (`S1G4` Matter + `S1G4ZB`
+> Zigbee); stock 2.0's variant guard then refuses our foreign app and the module
+> keeps booting stock. The stock **1.5.x → 2.0** update collapses it to a single
+> `S1G4` variant, after which the web-UI package installs correctly.
+>
 > **Once the firmware runs, all future updates are done over the air via the
 > device's own OTA page and Matter OTA — no UART needed** (see section 10).
 
