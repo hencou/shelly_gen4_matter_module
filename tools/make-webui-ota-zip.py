@@ -8,13 +8,18 @@
 #     python3 tools/make-webui-ota-zip.py /path/to/shelly_gen4_matter_module
 #
 # It reads the project name and version from build/project_description.json,
-# pulls the bootloader, partition table and app from build/, adds an empty
-# filesystem image, and writes shelly-gen4-matter-module-v<version>-ota.zip.
+# pulls the app from build/, adds an empty filesystem image, and writes
+# shelly-gen4-matter-module-v<version>-ota.zip.
 #
 # STOCK-LOADER MODE: this package PRESERVES the stock Shelly OS loader.
-#  - The boot part carries min_version 0.0.0, so the stock updater reads the
-#    bundled bootloader as older than its own and keeps the stock loader at
-#    offset 0x0 (nothing there is overwritten).
+#  - No boot part is shipped. Earlier we bundled bootloader.bin with
+#    min_version 0.0.0 hoping the stock updater would treat it as older and
+#    skip it, but in practice the updater flashed our ESP-IDF bootloader over
+#    the stock loader at offset 0x0. The ESP-IDF bootloader cannot read the
+#    stock "SH0S" boot-select record our firmware maintains, so after an OTA it
+#    reported "otadata invalid" and reverted to app_0. Shipping no boot part at
+#    all leaves the stock SH0S loader untouched, which is what the SH0S
+#    boot-select (main/shelly_boot.c) needs to switch slots correctly.
 #  - No otadata part is shipped. The stock loader uses its own "SH0S" boot-
 #    select record in the otadata partition; overwriting it with the ESP-IDF
 #    otadata format would leave the loader with no valid record. The running
@@ -36,10 +41,6 @@ PLATFORM     = "esp32c6"
 # Kept above any stock version; the device never refuses it as a downgrade.
 # The real firmware version is in the app and the zip filename, not here.
 MANIFEST_VER = "99.0.0"
-# Keep the stock OS loader: a min_version of 0.0.0 is read by the stock updater
-# as older than its own loader, so it keeps the stock loader at offset 0x0 and
-# does NOT flash our bundled bootloader over it.
-BOOT_MIN     = "0.0.0"
 # Must match the stock Shelly 1 Gen4 partition layout.
 NVS_SIZE = 0xC000
 FS_SIZE  = 0xE0000
@@ -63,7 +64,6 @@ def main():
     project_name, version = desc["project_name"], desc["project_version"]
 
     src = {
-        "bootloader.bin":      os.path.join(build, "bootloader", "bootloader.bin"),
         "app.bin":             os.path.join(build, f"{project_name}.bin"),
     }
     missing = [p for p in src.values() if not os.path.isfile(p)]
@@ -91,7 +91,6 @@ def main():
             "build_id": now.strftime("%Y%m%d-%H%M%S") + f"/{stem}",
             "build_timestamp": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "parts": {
-                "boot":    part("bootloader.bin", type="boot", addr=0x0, min_version=BOOT_MIN, encrypt=ENCRYPT),
                 "nvs":     {"type": "nvs", "size": NVS_SIZE, "fill": 255, "ptn": "nvs"},
                 "app":     part("app.bin", type="app", ptn="app_0", encrypt=ENCRYPT),
                 "fs":      part("fs.img", type="fs", ptn="fs_0", fs_size=FS_SIZE, encrypt=ENCRYPT),
@@ -102,7 +101,7 @@ def main():
         with open(manifest_path, "w") as f:
             json.dump(manifest, f, indent=2)
 
-        order = ["manifest.json", "bootloader.bin", "app.bin", "fs.img"]
+        order = ["manifest.json", "app.bin", "fs.img"]
         src_for = {**paths, "manifest.json": manifest_path}
         with zipfile.ZipFile(zip_out, "w", zipfile.ZIP_STORED) as z:
             for member in order:

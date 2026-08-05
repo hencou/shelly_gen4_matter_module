@@ -266,7 +266,7 @@ idf.py build
 python3 tools/make-webui-ota-zip.py     # → shelly-gen4-matter-module-v<version>-ota.zip
 ```
 
-The package ships no partition table and no bootloader downgrade (`min_version 0.0.0`), so it keeps the device's own stock partition table and OS loader and only writes `nvs`, `app` and `fs`. The firmware then rewrites the stock `SH0S` boot-select record so the module boots the new app instead of reverting to stock. This is the route used for the very first install from stock Shelly firmware (see [First flash](#1-first-flash)) and works regardless of whether the unit runs stock 1.5/1.7/2.0.
+The package ships **no bootloader and no partition table**, so it keeps the device's own stock partition table and stock OS loader untouched and only writes `nvs`, `app` and `fs`. Preserving the stock loader is essential: it reads its own `SH0S` boot-select record (which the firmware rewrites after each OTA) to switch app slots, whereas the ESP-IDF bootloader would treat that record as invalid `otadata` and revert to the old app. This is the route used for the very first install from stock Shelly firmware (see [First flash](#1-first-flash)) and works regardless of whether the unit runs stock 1.5/1.7/2.0.
 
 > **Install from stock: update to stock v2.0 first.** On a factory unit that still
 > carries the dual-variant layout (`S1G4` Matter + `S1G4ZB` Zigbee), stock 2.0's
