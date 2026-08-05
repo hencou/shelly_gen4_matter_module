@@ -5,6 +5,7 @@
 
 #include "web_api.h"
 #include "ota.h"
+#include "shelly_boot.h"
 #include "app_config.h"
 #include "hw_config.h"
 #include "power_meter.h"
@@ -855,12 +856,25 @@ static esp_err_t upload_post(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    err = esp_ota_set_boot_partition(update_part);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_ota_set_boot_partition: %s", esp_err_to_name(err));
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                            "Setting boot partition failed");
-        return ESP_FAIL;
+    /* The stock Shelly OS loader ignores the IDF otadata format and boots the
+     * slot recorded in its own SH0S boot-select structure. Update that first so
+     * the loader actually switches to the freshly written slot; fall back to the
+     * standard IDF API only when no SH0S entry exists (IDF bootloader). */
+    int slot = (int)update_part->subtype - (int)ESP_PARTITION_SUBTYPE_APP_OTA_MIN;
+    err = shelly_boot_switch_slot(slot);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Shelly boot-select switched to %s (app_%d)",
+                 update_part->label, slot);
+    } else {
+        ESP_LOGW(TAG, "Shelly boot-select not applied (%s), using IDF API",
+                 esp_err_to_name(err));
+        err = esp_ota_set_boot_partition(update_part);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "esp_ota_set_boot_partition: %s", esp_err_to_name(err));
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                "Setting boot partition failed");
+            return ESP_FAIL;
+        }
     }
 
     ESP_LOGI(TAG, "upload succeeded (%d bytes), rebooting", total);
