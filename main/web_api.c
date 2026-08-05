@@ -6,6 +6,7 @@
 #include "web_api.h"
 #include "ota.h"
 #include "shelly_boot.h"
+#include "stock_restore.h"
 #include "app_config.h"
 #include "hw_config.h"
 #include "power_meter.h"
@@ -1166,7 +1167,7 @@ void web_api_start_httpd(void)
     hc.recv_wait_timeout  = 30;
     hc.send_wait_timeout  = 10;
     hc.max_open_sockets   = 3;
-    hc.max_uri_handlers   = 20;
+    hc.max_uri_handlers   = 22;
     ESP_ERROR_CHECK(httpd_start(&srv, &hc));
 
     httpd_uri_t get_root          = { "/",                  HTTP_GET,    form_get,              NULL };
@@ -1188,6 +1189,7 @@ void web_api_start_httpd(void)
     httpd_uri_t post_script       = { "/api/script",        HTTP_POST,   api_script_post,       NULL };
     httpd_uri_t del_script        = { "/api/script",        HTTP_DELETE, api_script_delete,     NULL };
     httpd_uri_t get_diag          = { "/api/diag",          HTTP_GET,    api_diag_get,          NULL };
+    httpd_uri_t post_restore_stock= { "/api/restore-stock", HTTP_POST,   stock_restore_handle_upload, NULL };
 
     httpd_register_uri_handler(srv, &get_root);
     httpd_register_uri_handler(srv, &post_upload);
@@ -1208,6 +1210,7 @@ void web_api_start_httpd(void)
     httpd_register_uri_handler(srv, &post_script);
     httpd_register_uri_handler(srv, &del_script);
     httpd_register_uri_handler(srv, &get_diag);
+    httpd_register_uri_handler(srv, &post_restore_stock);
 
     s_srv = srv;
 }
