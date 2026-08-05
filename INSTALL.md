@@ -71,16 +71,17 @@ Expected output: `build/shelly_gen4_matter_module.bin` (~1.6-1.8 MB).
 
 The Shelly 1 Gen4 has **7 holes in a row** on the back — this is the **J6 connector** (silkscreen label `J6`) of the integrated ESP32-C6 module. This is the same row of pins where a Shelly Plus Add-on connects, but it can also be used to flash the ESP32-C6.
 
-> **The initial install is UART-only.** Installing from the stock Shelly
-> firmware over its own web page is **no longer supported**: the custom
-> firmware ships the standard ESP-IDF bootloader (replacing the stock Shelly
-> OS loader), and the stock 2.0 web updater rejects our package. The legacy
-> `tools/make-webui-ota-zip.py` remains only for stock 1.x web installs and is
-> not part of the supported flow.
+> **UART is no longer the only install route.** You can now install straight
+> from the stock Shelly web UI with the package built by
+> `tools/make-webui-ota-zip.py` (it keeps the stock partition table and OS
+> loader and manages the stock `SH0S` boot-select) — see the README's
+> [Firmware updates](README.md#firmware-updates) section. That is the only way
+> to flash a **Shelly 1 Mini Gen4** (no accessible UART pads). UART flashing
+> below is still recommended when you want to make a full 8 MB backup for a
+> guaranteed return to stock.
 >
 > **Once the firmware runs, all future updates are done over the air via the
 > device's own OTA page and Matter OTA — no UART needed** (see section 10).
-> UART is only ever needed for this first install and for returning to stock.
 
 ⚠️ **Only UART flashing can back up the stock Shelly firmware first.** If you might ever want to return to stock, do the UART backup below **before** flashing anything. Restoring stock later also requires UART (there is no way back to stock over the air).
 
