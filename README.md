@@ -10,7 +10,7 @@
 - **Thread + WiFi** — Thread for Matter communication, WiFi for management/OTA
 - **Smart boot** — auto-detects factory reset vs configured vs commissioned state
 - **WiFi management dashboard** — configure scripts, WiFi, endpoints, backup/restore
-- **Over-the-air updates** — Matter OTA over Thread and `.bin` upload via the dashboard (standard ESP-IDF OTA with rollback). Initial install is a one-time UART flash. See [Firmware updates](#firmware-updates).
+- **Over-the-air updates** — Matter OTA over Thread and `.bin` upload via the dashboard (standard ESP-IDF OTA with rollback). Can be installed straight from the stock Shelly web UI (no UART, no opening the device); UART is only needed to make a full backup or for a guaranteed return to stock. See [Firmware updates](#firmware-updates).
 
 ## Endpoint types
 
@@ -33,7 +33,7 @@ Each script slot can be configured as one of these Matter endpoint types:
 
 ## Target hardware
 
-One firmware image supports three Gen4 models (all ESP32-C6, 8 MB flash). Select
+One firmware image supports four Gen4 models (all ESP32-C6, 8 MB flash). Select
 the model on the management dashboard (**Hardware → Device Type**); the choice is
 stored in NVS and applied on the next boot. The correct GPIO mapping is then used
 for the relay(s), wall-switch input(s), onboard button and status LED.
@@ -41,15 +41,19 @@ for the relay(s), wall-switch input(s), onboard button and status LED.
 | Model | Relay | Switch | Button | Status LED | Add-on | Power meter |
 |---|---|---|---|---|---|---|
 | **Shelly 1 Gen4** (default) | GPIO5 | GPIO10 | GPIO4 | GPIO15 | yes | — |
+| **Shelly 1 Mini Gen4** | GPIO10 | GPIO12 | GPIO22 | GPIO5 | — | — |
 | **Shelly 1PM Gen4** | GPIO4 | GPIO10 | GPIO1 | GPIO0 | yes | BL0942 (UART1 TX=GPIO6 RX=GPIO7, 9600 baud) |
 | **Shelly 2PM Gen4** | GPIO5 + GPIO3 | GPIO11 + GPIO10 | GPIO12 | GPIO0 | yes | ADE7953 dual-channel (I2C SDA=GPIO6 SCL=GPIO7, IRQ=GPIO19) |
 
-> ℹ️ **Shelly 1 Mini Gen4 is not supported.** The Mini has no accessible UART
-> pads for the required one-time initial flash (see [Firmware updates](#firmware-updates)),
-> so it is not on the compatibility list.
+> ℹ️ **Shelly 1 Mini Gen4 is supported again.** It was previously excluded
+> because the Mini has no accessible UART pads and the only install path was a
+> one-time UART flash. Since installing straight from the stock Shelly web UI now
+> works (see [Firmware updates](#firmware-updates)), the Mini can be flashed
+> without opening it. The Mini has **no** Shelly Plus Add-on connector, so the
+> add-on inputs are unavailable on it.
 
 > ⚠️ **Test status:** only the **Shelly 1 Gen4** has been verified on real
-> hardware. The **1PM Gen4** and **2PM Gen4** profiles are
+> hardware. The **1 Mini Gen4**, **1PM Gen4** and **2PM Gen4** profiles are
 > implemented from the published pinouts but have **not** been hardware-tested.
 > The BL0942 and ADE7953 scaling constants are placeholders and **must** be
 > calibrated against a known load on real hardware before the reported
@@ -89,11 +93,35 @@ Notes:
 
 ### 1. First flash
 
-The initial install is a **one-time UART flash** (see [INSTALL.md](INSTALL.md)): open the device and wire a USB-UART adapter to the J6 connector. This installs the standard ESP-IDF bootloader (replacing the stock Shelly OS loader) together with the partition table and app. It is also the **only** way to back up the stock Shelly firmware first (see the warning under [Firmware updates](#firmware-updates)).
+There are two ways to install the firmware for the first time.
 
-After this one-time flash, **all** further updates are over the air (Matter OTA / dashboard `.bin` upload) — no UART needed.
+**Option A — from the stock Shelly web UI (no UART, no opening the device):**
+build the web-UI package and upload it through the stock Shelly device page
+(**Settings → Firmware**, "install from file"):
 
-> Installing from the stock Shelly web page is **not supported**: the stock 2.0 web updater rejects our package, and keeping the stock OS loader caused updates to revert to stock firmware. The legacy `tools/make-webui-ota-zip.py` remains only for stock 1.x web installs and is outside the supported flow.
+```bash
+idf.py build
+python3 tools/make-webui-ota-zip.py     # → shelly-gen4-matter-module-v<version>-ota.zip
+```
+
+The package keeps the device's own (stock) partition table and OS loader — it
+only writes `nvs`, `app` and `fs` — and the firmware then manages the stock
+`SH0S` boot-select so the module boots our app. This is the only way to install
+on a **Shelly 1 Mini Gen4**, which has no accessible UART pads.
+
+> ✅ Verified on a **Shelly 1 Gen4** updating from stock **v2.0**. The layout is
+> identical on stock 1.5/1.7/2.0 (same offsets, same SH0S structure), so it is
+> expected to work there too, but that has not been individually hardware-tested.
+> Keep a full backup before flashing (see the warning under
+> [Firmware updates](#firmware-updates)).
+
+**Option B — UART flash (see [INSTALL.md](INSTALL.md)):** open the device and
+wire a USB-UART adapter to the J6 connector. This installs the ESP-IDF bootloader
+together with the partition table and app, and is also the way to make a full
+8 MB backup of the stock Shelly firmware for a guaranteed return to stock.
+
+After either first install, **all** further updates are over the air (Matter OTA
+/ dashboard `.bin` upload, or a fresh web-UI package) — no UART needed.
 
 ### 2. Factory reset → WiFi setup mode
 
@@ -188,9 +216,15 @@ After factory reset the module reboots into WiFi setup mode (step 2).
 
 ## Firmware updates
 
-Once the custom firmware is running you can update it two ways. Both flash the **same** application binary (`build/shelly_gen4_matter_module.bin`) — they only differ in transport, and both use standard ESP-IDF OTA slot selection with bootloader rollback (a bad image is automatically reverted to the previous slot).
+Once the custom firmware is running you can update it three ways. They all flash the **same** application binary (`build/shelly_gen4_matter_module.bin`) — they only differ in transport, and all use standard ESP-IDF OTA slot selection with bootloader rollback (a bad image is automatically reverted to the previous slot).
 
-> ⚠️ **Return to stock is UART-only.** The custom firmware replaces the stock Shelly OS loader with the ESP-IDF bootloader, so there is **no** over-the-air path back to stock. The only way back is restoring your full 8 MB UART backup of that exact device. Make that UART backup **before** the first flash (with [ESPConnect](https://thelastoutpostworkshop.github.io/microcontroller_devkit/espconnect/) or `esptool.py read_flash`, see [INSTALL.md](INSTALL.md)) — afterwards it is too late.
+> ⚠️ **Return to stock: restore your full UART backup.** There is no built-in
+> over-the-air path back to stock Shelly firmware. The reliable way back is
+> restoring the full 8 MB UART backup of that exact device, so make that backup
+> **before** the first flash (with [ESPConnect](https://thelastoutpostworkshop.github.io/microcontroller_devkit/espconnect/)
+> or `esptool.py read_flash`, see [INSTALL.md](INSTALL.md)) — afterwards it is too
+> late. The factory `shelly` partition (hardware/Matter credentials) is never
+> overwritten and is preserved across installs.
 
 ### 1. Matter OTA (over Thread)
 
@@ -209,7 +243,16 @@ The image embeds the vendor/product ID and software version; the device only acc
 
 For modules already running this firmware: open the management dashboard (**6× rapid button press** → WiFi), go to the **WiFi & OTA** tab, and either provide a firmware URL or upload `build/shelly_gen4_matter_module.bin` directly. The device flashes the inactive OTA slot with `esp_ota_set_boot_partition()` and reboots into it; on boot the app marks itself valid, otherwise the bootloader rolls back.
 
-> Legacy: `tools/make-webui-ota-zip.py` builds a stock-Shelly-1.x web-UI zip. It is unsupported (rejected by stock 2.0) and only relevant for a one-time transition from stock 1.x without UART.
+### 3. Web-UI package (also for installing from stock Shelly)
+
+Build a Shelly web-UI package and upload it through a Shelly device page (the stock page when installing from stock, or the module's own web UI later):
+
+```bash
+idf.py build
+python3 tools/make-webui-ota-zip.py     # → shelly-gen4-matter-module-v<version>-ota.zip
+```
+
+The package ships no partition table and no bootloader downgrade (`min_version 0.0.0`), so it keeps the device's own stock partition table and OS loader and only writes `nvs`, `app` and `fs`. The firmware then rewrites the stock `SH0S` boot-select record so the module boots the new app instead of reverting to stock. This is the route used for the very first install from stock Shelly firmware (see [First flash](#1-first-flash)) and works regardless of whether the unit runs stock 1.5/1.7/2.0.
 
 ### Older modules need a one-time UART reflash
 
