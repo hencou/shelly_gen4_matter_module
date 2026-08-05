@@ -19,12 +19,13 @@
 #    select record in the otadata partition; overwriting it with the ESP-IDF
 #    otadata format would leave the loader with no valid record. The running
 #    firmware maintains SH0S at runtime (see main/shelly_boot.c) after OTA.
-#
-# NOTE: the exact slot the stock v2.0 web updater flashes into and how it
-# rewrites SH0S on accept are NOT yet confirmed from a real stock v2.0 OTA
-# zip + manifest.json. Until that is verified against hardware, treat the
-# initial web-UI install path as unproven; the proven part is runtime SH0S
-# switching for OTA between our own versions and Matter OTA.
+#  - No pt (partition table) part is shipped. The stock v2.0 partition table
+#    carries an MD5 entry, a scratch partition and per-partition encrypt flags
+#    (the unit runs with flash encryption). Our build's table has none of those,
+#    so the stock v2.0 updater rejects it ("Unable to parse pt"), and imposing
+#    flags=0 on an encrypted unit would break boot. Our layout already matches
+#    the stock table (app_0 @0x20000, nvs @0x14000, ...), so we keep the device's
+#    own table and only flash app/fs/nvs into it.
 #
 import datetime, hashlib, json, os, sys, tempfile, zipfile
 
@@ -40,7 +41,6 @@ MANIFEST_VER = "99.0.0"
 # does NOT flash our bundled bootloader over it.
 BOOT_MIN     = "0.0.0"
 # Must match the stock Shelly 1 Gen4 partition layout.
-PT_ADDR  = 0x10000
 NVS_SIZE = 0xC000
 FS_SIZE  = 0xE0000
 # No flash encryption on these units. Left true because that
@@ -64,7 +64,6 @@ def main():
 
     src = {
         "bootloader.bin":      os.path.join(build, "bootloader", "bootloader.bin"),
-        "partition-table.bin": os.path.join(build, "partition_table", "partition-table.bin"),
         "app.bin":             os.path.join(build, f"{project_name}.bin"),
     }
     missing = [p for p in src.values() if not os.path.isfile(p)]
@@ -93,7 +92,6 @@ def main():
             "build_timestamp": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "parts": {
                 "boot":    part("bootloader.bin", type="boot", addr=0x0, min_version=BOOT_MIN, encrypt=ENCRYPT),
-                "pt":      part("partition-table.bin", type="pt", addr=PT_ADDR, encrypt=ENCRYPT),
                 "nvs":     {"type": "nvs", "size": NVS_SIZE, "fill": 255, "ptn": "nvs"},
                 "app":     part("app.bin", type="app", ptn="app_0", encrypt=ENCRYPT),
                 "fs":      part("fs.img", type="fs", ptn="fs_0", fs_size=FS_SIZE, encrypt=ENCRYPT),
@@ -104,8 +102,7 @@ def main():
         with open(manifest_path, "w") as f:
             json.dump(manifest, f, indent=2)
 
-        order = ["manifest.json", "bootloader.bin", "partition-table.bin",
-                 "app.bin", "fs.img"]
+        order = ["manifest.json", "bootloader.bin", "app.bin", "fs.img"]
         src_for = {**paths, "manifest.json": manifest_path}
         with zipfile.ZipFile(zip_out, "w", zipfile.ZIP_STORED) as z:
             for member in order:
