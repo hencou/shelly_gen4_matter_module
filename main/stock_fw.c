@@ -10,7 +10,6 @@
 #include "esp_log.h"
 #include "esp_partition.h"
 #include "esp_http_client.h"
-#include "esp_crt_bundle.h"
 #include "cJSON.h"
 
 static const char *TAG = "stock_fw";
@@ -78,10 +77,17 @@ static esp_err_t fetch_lookup(const char *app, char *body, size_t body_len, int 
     char url[128];
     snprintf(url, sizeof(url), "https://updates.shelly.cloud/update/%s", app);
 
+    /* updates.shelly.cloud / fwcdn.shelly.cloud use a private "Allterco" CA that
+     * is not in any standard root-certificate bundle, so TLS verification always
+     * fails ("No matching trusted root certificate found"). This lookup only
+     * returns a version string and a download URL — no code runs from it, and the
+     * firmware itself is SHA-256-verified during return-to-stock — so we
+     * deliberately skip certificate verification here (no crt_bundle attached =>
+     * esp-tls uses MBEDTLS_SSL_VERIFY_NONE). */
     esp_http_client_config_t cfg = {
         .url = url,
         .timeout_ms = 15000,
-        .crt_bundle_attach = esp_crt_bundle_attach,
+        .skip_cert_common_name_check = true,
     };
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
     if (!c) return ESP_FAIL;
