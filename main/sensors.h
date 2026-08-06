@@ -14,6 +14,14 @@ typedef void (*analog_cb_t)(uint8_t duty_pct);          /* 0-100 % PWM duty cycl
 
 void sensors_init(temp_cb_t temp_cb, occupancy_cb_t occ_cb, analog_cb_t analog_cb);
 
+/* Latest cached DS18B20 reading (centi-°C). Returns false if no valid reading
+ * yet (sensor absent or last read failed). Avoids driving the 1-Wire bus from
+ * callers, which would race the sensor task. */
+bool sensors_temp_get_centi(int16_t *out);
+
+/* Latest cached Add-on Analog IN duty cycle (0-100 %), or -1 if unavailable. */
+int sensors_occupancy_duty(void);
+
 #ifdef __cplusplus
 }
 #endif

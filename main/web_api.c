@@ -14,6 +14,7 @@
 #include "ade7953.h"
 #include "relay.h"
 #include "chip_temp.h"
+#include "sensors.h"
 #include "script_engine.h"
 #include "dashboard_html.h"
 #include "matter_device.h"
@@ -53,58 +54,6 @@
 
 
 static const char *TAG = "web_api";
-
-/* ---------- DS18B20 sensor read (dual-pin 1-Wire via ISO7221A) ---------- */
-
-#define OTA_OW_TX  PIN_ONEWIRE_TX
-#define OTA_OW_RX  PIN_ONEWIRE_RX
-
-static inline void ota_ow_tx_low(void)  { gpio_set_level(OTA_OW_TX, 0); }
-static inline void ota_ow_tx_high(void) { gpio_set_level(OTA_OW_TX, 1); }
-static inline int  ota_ow_rx_rd(void)   { return gpio_get_level(OTA_OW_RX); }
-
-static bool ota_ow_reset(void)
-{
-    uint8_t retries = 125;
-    do {
-        if (--retries == 0) return false;
-        esp_rom_delay_us(2);
-    } while (!ota_ow_rx_rd());
-
-    ota_ow_tx_low();  esp_rom_delay_us(480);
-    ota_ow_tx_high(); esp_rom_delay_us(70);
-    bool present = !ota_ow_rx_rd();
-    esp_rom_delay_us(410);
-    return present;
-}
-
-static void ota_ow_write_bit(int b)
-{
-    ota_ow_tx_low();
-    if (b) { esp_rom_delay_us(10); ota_ow_tx_high(); esp_rom_delay_us(55); }
-    else   { esp_rom_delay_us(65); ota_ow_tx_high(); esp_rom_delay_us(5);  }
-}
-
-static int ota_ow_read_bit(void)
-{
-    ota_ow_tx_low();  esp_rom_delay_us(3);
-    ota_ow_tx_high(); esp_rom_delay_us(9);
-    int v = ota_ow_rx_rd();
-    esp_rom_delay_us(53);
-    return v;
-}
-
-static void ota_ow_write_byte(uint8_t b)
-{
-    for (int i = 0; i < 8; i++) { ota_ow_write_bit(b & 1); b >>= 1; }
-}
-
-static uint8_t ota_ow_read_byte(void)
-{
-    uint8_t v = 0;
-    for (int i = 0; i < 8; i++) v |= (ota_ow_read_bit() << i);
-    return v;
-}
 
 /* ---------- HTTP handlers ---------- */
 
@@ -209,74 +158,31 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
     int dig_level = hw->has_addon ? gpio_get_level(PIN_TOUCH_INPUT) : 0;
 
     char ana_str[32];
-    char temp_str[32] = "N/A (bench mode)";
+    char temp_str[32];
     if (!hw->has_addon) {
         snprintf(ana_str, sizeof(ana_str), "N/A (no Add-on)");
         snprintf(temp_str, sizeof(temp_str), "N/A (no Add-on)");
     } else if (g_bench_mode) {
         snprintf(ana_str, sizeof(ana_str), "N/A (bench mode)");
+        snprintf(temp_str, sizeof(temp_str), "N/A (bench mode)");
     } else {
-        {
-            uart_driver_install(UART_NUM_0, 256, 0, 0, NULL, 0);
-            uart_driver_delete(UART_NUM_0);
-            periph_module_disable(PERIPH_UART0_MODULE);
-            gpio_reset_pin(PIN_LD2410_INPUT);
-            gpio_config_t cfg = {
-                .pin_bit_mask = (1ULL << PIN_LD2410_INPUT),
-                .mode         = GPIO_MODE_INPUT,
-                .pull_down_en = GPIO_PULLDOWN_ENABLE,
-            };
-            gpio_config(&cfg);
-            int high = 0, total = 0;
-            for (int us = 0; us < 100000; us += 100) {
-                if (gpio_get_level(PIN_LD2410_INPUT)) high++;
-                total++;
-                esp_rom_delay_us(100);
-            }
-            int duty = (high * 100) / total;
+        /* Report the values the sensor tasks already read. Probing the 1-Wire
+         * bus here would race temp_task and miss the DS18B20 presence pulse. */
+        int duty = sensors_occupancy_duty();
+        if (duty < 0) {
+            snprintf(ana_str, sizeof(ana_str), "N/A");
+        } else {
             snprintf(ana_str, sizeof(ana_str), "%d%% duty (%s)",
                      duty, duty >= 25 ? "occupied" : "clear");
         }
 
-        strcpy(temp_str, "sensor not found");
-        {
-            uart_driver_delete(UART_NUM_0);
-            gpio_config_t tx_cfg = {
-                .pin_bit_mask = (1ULL << OTA_OW_TX),
-                .mode         = GPIO_MODE_OUTPUT,
-            };
-            gpio_config(&tx_cfg);
-            ota_ow_tx_high();
-            gpio_reset_pin(OTA_OW_RX);
-            gpio_config_t rx_cfg = {
-                .pin_bit_mask = (1ULL << OTA_OW_RX),
-                .mode         = GPIO_MODE_INPUT,
-            };
-            gpio_config(&rx_cfg);
-
-            if (ota_ow_reset()) {
-                ota_ow_write_byte(0xCC);
-                ota_ow_write_byte(0x44);
-                vTaskDelay(pdMS_TO_TICKS(820));
-                if (ota_ow_reset()) {
-                    ota_ow_write_byte(0xCC);
-                    ota_ow_write_byte(0xBE);
-                    uint8_t sc[9];
-                    for (int i = 0; i < 9; i++) sc[i] = ota_ow_read_byte();
-                    int16_t raw = (int16_t)((sc[1] << 8) | sc[0]);
-                    int16_t centi = (int16_t)(((int32_t)raw * 100) / 16);
-                    int deg  = centi / 100;
-                    int frac = centi < 0 ? -(centi % 100) : (centi % 100);
-                    if (frac < 0) frac = -frac;
-                    if (raw != 0x0550 && centi > -5500 && centi < 12500) {
-                        snprintf(temp_str, sizeof(temp_str), "%d.%02d C", deg, frac);
-                    } else if (raw == 0x0550) {
-                        snprintf(temp_str, sizeof(temp_str), "85.00 C (power-on default)");
-                    } else {
-                        snprintf(temp_str, sizeof(temp_str), "error (%d.%02d C)", deg, frac);
-                    }
-                }
-            }
+        int16_t centi;
+        if (sensors_temp_get_centi(&centi)) {
+            int deg  = centi / 100;
+            int frac = centi < 0 ? -(centi % 100) : (centi % 100);
+            snprintf(temp_str, sizeof(temp_str), "%d.%02d C", deg, frac);
+        } else {
+            snprintf(temp_str, sizeof(temp_str), "sensor not found");
         }
     }
 

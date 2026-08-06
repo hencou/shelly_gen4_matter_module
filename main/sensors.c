@@ -28,6 +28,25 @@
 
 static const char *TAG = "sensors";
 
+/* Latest values cached by the sensor tasks. The management page reads these
+ * instead of driving the 1-Wire bus itself — two masters on the same bus race
+ * and make the on-demand probe miss the DS18B20 presence pulse. */
+static volatile int16_t s_last_temp_centi;
+static volatile bool    s_temp_valid;
+static volatile int     s_last_duty = -1;
+
+bool sensors_temp_get_centi(int16_t *out)
+{
+    if (!s_temp_valid) return false;
+    if (out) *out = s_last_temp_centi;
+    return true;
+}
+
+int sensors_occupancy_duty(void)
+{
+    return s_last_duty;
+}
+
 /* ========================== Dual-pin 1-Wire / DS18B20 ========================== */
 /* The Shelly Plus Add-on uses an ISO7221A dual digital isolator.
  * TX pin (GPIO9)  = output: ESP32 sends commands to the DS18B20
@@ -150,9 +169,12 @@ static void temp_task(void *arg)
     while (1) {
         int16_t centi = 0;
         if (ds18b20_read_centi_c(&centi)) {
+            s_last_temp_centi = centi;
+            s_temp_valid = true;
             if (s_temp_cb) s_temp_cb(centi);
             ESP_LOGI(TAG, "temp = %d.%02d °C", centi / 100, abs(centi % 100));
         } else {
+            s_temp_valid = false;
             ESP_LOGW(TAG, "DS18B20 read failed");
         }
         vTaskDelay(pdMS_TO_TICKS(TEMP_REPORT_INT_S * 1000));
@@ -199,6 +221,7 @@ static void occ_task(void *arg)
     int last_occ = -1;
     for (;;) {
         int duty = measure_duty_pct();
+        s_last_duty = duty;
         if (s_analog_cb) s_analog_cb((uint8_t)duty);
         int occ  = (duty >= OCC_DUTY_THRESHOLD_PCT) ? 1 : 0;
         if (occ != last_occ) {
