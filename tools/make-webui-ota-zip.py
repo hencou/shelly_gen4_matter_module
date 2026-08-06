@@ -19,8 +19,15 @@
 #    any future changes to the Shelly loader: our OTA simply uses
 #    esp_ota_set_boot_partition(). Return-to-stock re-flashes the stock app; the
 #    Shelly loader is then reinstalled by the stock firmware's own next update.
-#  - Ships otadata (build/ota_data_initial.bin). Fresh (all-0xFF) otadata makes
-#    the ESP-IDF bootloader boot app_0, where the app part below is flashed.
+#  - Ships our app into the INACTIVE slot (app_1/fs_1). The stock v2.0 updater
+#    runs from app_0 and cannot rewrite the slot it is executing from, so a part
+#    with ptn "app_0" is silently skipped (confirmed in the field: after such a
+#    package only our bootloader landed, both app slots still held the stock
+#    app). Targeting app_1 is the slot the updater can actually write.
+#  - Ships an otadata that selects app_1. A fresh all-0xFF otadata makes the
+#    ESP-IDF bootloader fall back to app_0 (the first bootable slot) -- which
+#    here still holds the stock app -- so it must explicitly point at app_1
+#    where our app was flashed. See otadata_select_slot().
 #  - No pt (partition table) part is shipped. The stock v2.0 partition table
 #    carries an MD5 entry, a scratch partition and per-partition encrypt flags;
 #    our build's table has none of those, so the stock v2.0 updater rejects it
@@ -31,7 +38,7 @@
 #    byte-identical to the plaintext stock bootloader.bin), so writing our
 #    plaintext bootloader is safe.
 #
-import datetime, hashlib, json, os, sys, tempfile, zipfile
+import binascii, datetime, hashlib, json, os, struct, sys, tempfile, zipfile
 
 # Fixed for the Shelly 1 Gen4 hardware.
 APP_CODE     = "S1G4"
@@ -41,11 +48,34 @@ PLATFORM     = "esp32c6"
 # The real firmware version is in the app and the zip filename, not here.
 MANIFEST_VER = "99.0.0"
 # Must match the stock Shelly 1 Gen4 partition layout.
-NVS_SIZE = 0xC000
-FS_SIZE  = 0xE0000
+NVS_SIZE     = 0xC000
+FS_SIZE      = 0xE0000
+OTADATA_SIZE = 0x2000
+SECTOR_SIZE  = 0x1000
+# The stock updater runs from app_0, so it can only write the other slot.
+TARGET_SLOT  = 1  # app_1 / fs_1
 # No flash encryption on these units. Left true because that
 # is the correct value if a unit ever ships with encryption enabled.
 ENCRYPT  = True
+
+
+def otadata_select_slot(slot, app_count=2):
+    """ESP-IDF otadata image (two sectors) that boots the given OTA app slot.
+
+    The bootloader picks the highest valid ota_seq and maps it to a slot via
+    (ota_seq - 1) % app_count, so seq = slot + 1 selects `slot`. The entry lives
+    in sector 0; sector 1 is left erased (all-0xFF = invalid). ota_state stays
+    0xFFFFFFFF (UNDEFINED = boots without a pending-verify gate), matching what
+    ESP-IDF's otatool writes. crc is crc32 over the ota_seq field only.
+    """
+    seq = slot + 1
+    img = bytearray(b"\xff" * OTADATA_SIZE)
+    crc = binascii.crc32(struct.pack("<I", seq), 0xFFFFFFFF) & 0xFFFFFFFF
+    # esp_ota_select_entry_t: ota_seq[4] seq_label[20] ota_state[4] crc[4]
+    entry = struct.pack("<I", seq) + b"\xff" * 20 + struct.pack("<I", 0xFFFFFFFF) \
+            + struct.pack("<I", crc)
+    img[0:len(entry)] = entry
+    return bytes(img)
 
 
 def digest(path):
@@ -64,7 +94,6 @@ def main():
 
     src = {
         "bootloader.bin":      os.path.join(build, "bootloader", "bootloader.bin"),
-        "boot_state.bin":      os.path.join(build, "ota_data_initial.bin"),
         "app.bin":             os.path.join(build, f"{project_name}.bin"),
     }
     missing = [p for p in src.values() if not os.path.isfile(p)]
@@ -78,7 +107,10 @@ def main():
         fs_img = os.path.join(tmp, "fs.img")
         with open(fs_img, "wb") as f:
             f.write(b"\xff" * FS_SIZE)
-        paths = {**src, "fs.img": fs_img}
+        boot_state = os.path.join(tmp, "boot_state.bin")
+        with open(boot_state, "wb") as f:
+            f.write(otadata_select_slot(TARGET_SLOT))
+        paths = {**src, "fs.img": fs_img, "boot_state.bin": boot_state}
 
         def part(member, **extra):
             size, sha = digest(paths[member])
@@ -99,8 +131,8 @@ def main():
                 "otadata": part("boot_state.bin", type="otadata", ptn="otadata",
                                 encrypt=ENCRYPT),
                 "nvs":     {"type": "nvs", "size": NVS_SIZE, "fill": 255, "ptn": "nvs"},
-                "app":     part("app.bin", type="app", ptn="app_0", encrypt=ENCRYPT),
-                "fs":      part("fs.img", type="fs", ptn="fs_0", fs_size=FS_SIZE, encrypt=ENCRYPT),
+                "app":     part("app.bin", type="app", ptn=f"app_{TARGET_SLOT}", encrypt=ENCRYPT),
+                "fs":      part("fs.img", type="fs", ptn=f"fs_{TARGET_SLOT}", fs_size=FS_SIZE, encrypt=ENCRYPT),
             },
             "compatible": COMPATIBLE,
         }
