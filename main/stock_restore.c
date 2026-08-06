@@ -14,6 +14,7 @@
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
+#include "esp_flash.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
 #include "mbedtls/sha256.h"
@@ -34,9 +35,12 @@ static const char *TAG = "stock_restore";
 #define FS_WRITE_BLOCK  4096
 
 typedef struct {
-    char src[64];
-    char type[16];
-    char sha[65];
+    char     src[64];
+    char     type[16];
+    char     sha[65];
+    char     ptn[16];
+    uint32_t addr;
+    bool     has_addr;
 } part_t;
 
 typedef struct {
@@ -126,6 +130,14 @@ static bool manifest_parse(const char *json, size_t len, manifest_t *m)
         cJSON *j_sha = cJSON_GetObjectItem(p, "cs_sha256");
         if (j_sha && cJSON_IsString(j_sha))
             strlcpy(dst->sha, j_sha->valuestring, sizeof(dst->sha));
+        cJSON *j_ptn = cJSON_GetObjectItem(p, "ptn");
+        if (j_ptn && cJSON_IsString(j_ptn))
+            strlcpy(dst->ptn, j_ptn->valuestring, sizeof(dst->ptn));
+        cJSON *j_addr = cJSON_GetObjectItem(p, "addr");
+        if (j_addr && cJSON_IsNumber(j_addr)) {
+            dst->addr = (uint32_t)j_addr->valuedouble;
+            dst->has_addr = true;
+        }
     }
     ok = m->nparts > 0;
 
@@ -229,6 +241,50 @@ out:
     return err;
 }
 
+/* Buffer a small member (bootloader / partition-table / boot_state) into heap
+ * and verify its SHA-256. These parts must be held until the app+fs are safely
+ * written, so nothing on flash is touched before the app image is verified. */
+static esp_err_t capture_part(httpd_req_t *req, size_t size, const char *want_sha,
+                              uint8_t **out, size_t *out_len)
+{
+    uint8_t *b = malloc(size);
+    if (!b) return ESP_ERR_NO_MEM;
+    if (rx_exact(req, b, size) != ESP_OK) { free(b); return ESP_FAIL; }
+
+    if (want_sha[0]) {
+        uint8_t digest[32]; char hex[65];
+        mbedtls_sha256(b, size, digest, 0);
+        sha_hex(digest, hex);
+        if (strcasecmp(hex, want_sha) != 0) {
+            ESP_LOGE(TAG, "SHA-256 mismatch on captured part");
+            free(b);
+            return ESP_ERR_INVALID_CRC;
+        }
+    }
+    *out = b;
+    *out_len = size;
+    return ESP_OK;
+}
+
+/* Erase + write `len` bytes to raw flash offset `addr` and verify the read-back.
+ * Used for the bootloader (0x0) and the partition table (0x10000), which live
+ * outside any partition. The units are not flash-encrypted, so plaintext writes
+ * reproduce the stock image exactly. */
+static esp_err_t write_raw_flash(uint32_t addr, const uint8_t *buf, size_t len)
+{
+    size_t erase = (len + 4095u) & ~4095u;   /* round up to a flash sector */
+    esp_err_t err = esp_flash_erase_region(NULL, addr, erase);
+    if (err != ESP_OK) return err;
+    if ((err = esp_flash_write(NULL, buf, addr, len)) != ESP_OK) return err;
+
+    uint8_t *chk = malloc(len);
+    if (!chk) return ESP_ERR_NO_MEM;
+    err = esp_flash_read(NULL, chk, addr, len);
+    if (err == ESP_OK && memcmp(chk, buf, len) != 0) err = ESP_ERR_INVALID_CRC;
+    free(chk);
+    return err;
+}
+
 static void fail(httpd_req_t *req, const char *msg)
 {
     ESP_LOGE(TAG, "return-to-stock failed: %s", msg);
@@ -252,84 +308,129 @@ esp_err_t stock_restore_handle_upload(httpd_req_t *req)
     bool have_manifest = false;
     bool wrote_app = false;
 
-    /* Walk the ZIP local file headers sequentially. */
+    /* Small stock members held in RAM until the app+fs are verified, so nothing
+     * outside the inactive app slot is touched until we are ready to commit. */
+    uint8_t *boot_buf = NULL, *pt_buf = NULL, *ota_buf = NULL;
+    size_t   boot_len = 0,     pt_len = 0,    ota_len = 0;
+    uint32_t boot_addr = 0,    pt_addr = 0;
+
+#define RESTORE_FAIL(msg) do { fail(req, (msg)); goto cleanup; } while (0)
+
+    /* Walk the ZIP local file headers sequentially. The stock package streams
+     * the small parts (boot, pt, otadata) before the large app+fs, so they are
+     * captured first and only flashed once the app image has verified. */
     for (;;) {
         uint8_t lfh[ZIP_LFH_LEN];
-        if (rx_exact(req, lfh, ZIP_LFH_LEN) != ESP_OK) { fail(req, "truncated zip"); return ESP_FAIL; }
+        if (rx_exact(req, lfh, ZIP_LFH_LEN) != ESP_OK) RESTORE_FAIL("truncated zip");
 
         uint32_t sig = rd32(lfh);
         if (sig == ZIP_CDH_SIG || sig == ZIP_EOCD_SIG) break;   /* end of members */
-        if (sig != ZIP_LFH_SIG) { fail(req, "not a zip package"); return ESP_FAIL; }
+        if (sig != ZIP_LFH_SIG) RESTORE_FAIL("not a zip package");
 
         uint16_t method   = rd16(lfh + 8);
         uint32_t comp_sz  = rd32(lfh + 18);
         uint16_t name_len = rd16(lfh + 26);
         uint16_t extra_len= rd16(lfh + 28);
-        if (method != 0) { fail(req, "zip must be uncompressed (STORED)"); return ESP_FAIL; }
-        if (name_len >= 64) { fail(req, "zip member name too long"); return ESP_FAIL; }
+        if (method != 0) RESTORE_FAIL("zip must be uncompressed (STORED)");
+        if (name_len >= 64) RESTORE_FAIL("zip member name too long");
 
         char name[64] = {0};
-        if (rx_exact(req, name, name_len) != ESP_OK) { fail(req, "truncated zip"); return ESP_FAIL; }
-        if (extra_len && rx_skip(req, extra_len) != ESP_OK) { fail(req, "truncated zip"); return ESP_FAIL; }
+        if (rx_exact(req, name, name_len) != ESP_OK) RESTORE_FAIL("truncated zip");
+        if (extra_len && rx_skip(req, extra_len) != ESP_OK) RESTORE_FAIL("truncated zip");
 
         if (strcmp(name, "manifest.json") == 0) {
-            if (comp_sz == 0 || comp_sz > MAX_MANIFEST) { fail(req, "bad manifest size"); return ESP_FAIL; }
+            if (comp_sz == 0 || comp_sz > MAX_MANIFEST) RESTORE_FAIL("bad manifest size");
             char *json = malloc(comp_sz + 1);
-            if (!json) { fail(req, "out of memory"); return ESP_FAIL; }
-            if (rx_exact(req, json, comp_sz) != ESP_OK) { free(json); fail(req, "truncated manifest"); return ESP_FAIL; }
+            if (!json) RESTORE_FAIL("out of memory");
+            if (rx_exact(req, json, comp_sz) != ESP_OK) { free(json); RESTORE_FAIL("truncated manifest"); }
             json[comp_sz] = 0;
             bool ok = manifest_parse(json, comp_sz, &man);
             free(json);
-            if (!ok) { fail(req, "invalid manifest"); return ESP_FAIL; }
+            if (!ok) RESTORE_FAIL("invalid manifest");
             have_manifest = true;
             continue;
         }
 
-        if (!have_manifest) { fail(req, "manifest.json must come first"); return ESP_FAIL; }
+        if (!have_manifest) RESTORE_FAIL("manifest.json must come first");
 
         const part_t *part = manifest_lookup(&man, name);
         const char *type = part ? part->type : "";
         const char *want_sha = part ? part->sha : "";
 
         if (part && strcmp(type, "app") == 0) {
-            esp_err_t err = write_app(req, comp_sz, app_part, want_sha);
-            if (err != ESP_OK) { fail(req, "app write/verify failed"); return ESP_FAIL; }
+            if (write_app(req, comp_sz, app_part, want_sha) != ESP_OK) RESTORE_FAIL("app write/verify failed");
             wrote_app = true;
         } else if (part && strcmp(type, "fs") == 0) {
-            esp_err_t err = write_fs(req, comp_sz, fs_part, want_sha);
-            if (err != ESP_OK) { fail(req, "fs write/verify failed"); return ESP_FAIL; }
+            if (write_fs(req, comp_sz, fs_part, want_sha) != ESP_OK) RESTORE_FAIL("fs write/verify failed");
+        } else if (part && strcmp(type, "boot") == 0) {
+            if (comp_sz > 0x10000) RESTORE_FAIL("bootloader too large");
+            if (capture_part(req, comp_sz, want_sha, &boot_buf, &boot_len) != ESP_OK) RESTORE_FAIL("bootloader capture failed");
+            boot_addr = part->has_addr ? part->addr : 0x0u;
+        } else if (part && strcmp(type, "pt") == 0) {
+            if (comp_sz > 0x1000) RESTORE_FAIL("partition table too large");
+            if (capture_part(req, comp_sz, want_sha, &pt_buf, &pt_len) != ESP_OK) RESTORE_FAIL("partition table capture failed");
+            pt_addr = part->has_addr ? part->addr : 0x10000u;
+        } else if (part && strcmp(type, "otadata") == 0) {
+            if (comp_sz > 0x2000) RESTORE_FAIL("boot state too large");
+            if (capture_part(req, comp_sz, want_sha, &ota_buf, &ota_len) != ESP_OK) RESTORE_FAIL("boot state capture failed");
         } else {
-            /* boot loader, partition table, or anything else: never written. */
             ESP_LOGW(TAG, "skipping part '%s' (type '%s')", name, type);
-            if (rx_skip(req, comp_sz) != ESP_OK) { fail(req, "truncated zip"); return ESP_FAIL; }
+            if (rx_skip(req, comp_sz) != ESP_OK) RESTORE_FAIL("truncated zip");
         }
     }
 
-    if (!have_manifest || !wrote_app) { fail(req, "package has no app image"); return ESP_FAIL; }
+    if (!have_manifest || !wrote_app) RESTORE_FAIL("package has no app image");
 
-    /* Commit: point the bootloader at the freshly written stock slot. This is
-     * the single irreversible step and only runs after the app verified.
-     *  - ESP-IDF bootloader (our installs): standard otadata. The stock app now
-     *    boots under our loader; a subsequent stock firmware update reinstalls
-     *    the Shelly OS loader itself, so we never rewrite the bootloader here.
-     *  - stock Shelly OS loader (older installs): SH0S boot-select. */
     esp_err_t err;
-    if (shelly_loader_present()) {
-        err = shelly_boot_switch_slot(slot);
-        if (err != ESP_OK) {
-            fail(req, "SH0S boot-select failed — restore your full UART backup instead");
-            return ESP_FAIL;
-        }
+
+    /*
+     * Commit. Everything below only runs after the app image verified, and the
+     * running slot is never overwritten. A full stock package (boot + otadata,
+     * as every official Shelly .zip contains) is restored so the device becomes
+     * byte-for-byte stock again: the Shelly OS loader boots the stock app which
+     * expects its own bootloader and an SH0S boot state.
+     *
+     * Write order is chosen so the irreversible bootloader write at 0x0 is last:
+     *   1. otadata  <- stock boot_state.bin (seeds a valid SH0S template)
+     *   2. pt       <- stock partition-table.bin @ 0x10000
+     *   3. SH0S boot-select -> the slot the stock app was actually written to
+     *   4. bootloader <- stock bootloader.bin @ 0x0  (Shelly OS loader)
+     * If the write at 0x0 is interrupted the device needs UART recovery from the
+     * full backup; this is documented on the management page.
+     */
+    if (ota_buf && boot_buf) {
+        const esp_partition_t *ota = esp_partition_find_first(
+            ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, NULL);
+        if (!ota || ota_len > ota->size) RESTORE_FAIL("otadata partition mismatch");
+
+        if ((err = esp_partition_erase_range(ota, 0, ota->size)) != ESP_OK) RESTORE_FAIL("otadata erase failed");
+        if ((err = esp_partition_write(ota, 0, ota_buf, ota_len)) != ESP_OK) RESTORE_FAIL("otadata write failed");
+
+        if (pt_buf && write_raw_flash(pt_addr, pt_buf, pt_len) != ESP_OK)
+            RESTORE_FAIL("partition table write failed — restore your full UART backup instead");
+
+        /* Re-point the freshly seeded SH0S boot state at the slot the stock app
+         * was actually written to (the inactive slot may be app_1). */
+        if ((err = shelly_boot_switch_slot(slot)) != ESP_OK)
+            RESTORE_FAIL("SH0S boot-select failed — restore your full UART backup instead");
+
+        if (write_raw_flash(boot_addr, boot_buf, boot_len) != ESP_OK)
+            RESTORE_FAIL("bootloader write failed — restore your full UART backup instead");
+
+        ESP_LOGW(TAG, "return-to-stock: restored stock bootloader + pt + boot state");
     } else {
-        err = esp_ota_set_boot_partition(app_part);
-        if (err != ESP_OK) {
-            fail(req, "could not set boot partition — restore your full UART backup instead");
-            return ESP_FAIL;
-        }
+        /* Package without a bootloader/boot-state (non-standard): fall back to a
+         * boot-select flip only. Works when the current loader still matches. */
+        ESP_LOGW(TAG, "package has no boot/otadata part — boot-select flip only");
+        if (shelly_loader_present())
+            err = shelly_boot_switch_slot(slot);
+        else
+            err = esp_ota_set_boot_partition(app_part);
+        if (err != ESP_OK) RESTORE_FAIL("boot-select failed — restore your full UART backup instead");
     }
 
-    /* Clear our NVS so stock starts clean (the factory `shelly` partition and
-     * the loader are left intact). Done last, after the boot slot flipped. */
+    /* Clear our NVS so stock starts clean (the factory `shelly` partition is
+     * left intact). Done last, after the boot path is committed. */
     if (man.erase_nvs) {
         const esp_partition_t *nvs = esp_partition_find_first(
             ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, "nvs");
@@ -340,9 +441,15 @@ esp_err_t stock_restore_handle_upload(httpd_req_t *req)
         }
     }
 
+    free(boot_buf); free(pt_buf); free(ota_buf);
     ESP_LOGW(TAG, "return-to-stock complete, rebooting into stock app_%d", slot);
     httpd_resp_sendstr(req, "OK");
     vTaskDelay(pdMS_TO_TICKS(800));
     esp_restart();
     return ESP_OK;
+
+cleanup:
+    free(boot_buf); free(pt_buf); free(ota_buf);
+    return ESP_FAIL;
+#undef RESTORE_FAIL
 }
