@@ -283,12 +283,11 @@ The package installs our own **ESP-IDF bootloader** at `0x0` (replacing the stoc
 
 The management dashboard (**Backup** tab) can flash an **original Shelly firmware package** back onto the module — the same `.zip` the stock web UI consumes. Download the package matching the model on your device label from the [community firmware archive](https://archive.shelly-tools.de/) (e.g. `S4SW-001X16EU` = Shelly 1 Gen4), then upload it under *Return to stock Shelly firmware*.
 
-The firmware writes the stock **app** to the inactive slot and the stock **filesystem**, verifies their SHA-256, and only then points the stock `SH0S` boot-select at the new slot and reboots into stock. Because the running firmware performs the write, transparent flash encryption applies, so this works on encrypted v2.0 units too. It never touches the bootloader or the factory `shelly` partition (both parts are deliberately skipped from the package), and a failed/aborted upload leaves the running slot untouched.
+The stock app cannot run under our ESP-IDF bootloader (it needs the Shelly OS loader and an `SH0S` boot state), so the module is made **byte-for-byte stock** again. The firmware first writes the stock **app** to the inactive slot and the stock **filesystem**, and verifies their SHA-256 — nothing outside that inactive slot is touched until this succeeds. It then restores, in order, the stock **boot state** (`otadata`), the stock **partition table** (`0x10000`), points the `SH0S` boot-select at the slot the stock app landed in, and finally rewrites the stock **bootloader** (Shelly OS loader) at `0x0`. Every write is verified by read-back. The factory `shelly` partition is never touched. The units are not flash-encrypted, so the plaintext images from the package reproduce the stock layout exactly.
 
-> ⚠️ **This path is not hardware-tested.** It only works on units that still
-> carry the stock Shelly OS loader — i.e. that were installed via the web-UI
-> package (§3), not via a UART reflash that replaced the loader. If the device
-> is not on the stock loader the upload is refused. Keep your full 8 MB UART
+> ⚠️ **This path is not hardware-tested, and the bootloader rewrite at `0x0` is
+> the one irreversible step.** If it is interrupted (power loss mid-write) the
+> device has no valid loader and needs UART recovery. Keep your full 8 MB UART
 > backup as the guaranteed fallback.
 
 ### Older modules need a one-time UART reflash
