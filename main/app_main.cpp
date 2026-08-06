@@ -25,6 +25,7 @@ extern "C" {
 #include "ade7953.h"
 #include "ota.h"
 #include "shelly_boot.h"
+#include "loader_migrate.h"
 #include "status_led.h"
 #include "script_engine.h"
 #include "web_api.h"
@@ -97,6 +98,12 @@ extern "C" void app_main(void)
     shelly_boot_snapshot();
 
     ESP_ERROR_CHECK(nvs_flash_init());
+
+    /* One-time migration to our ESP-IDF bootloader when the device still runs
+     * the stock Shelly OS loader (install-from-stock ships no bootloader). This
+     * reboots on success, so it must run before the heavy Matter/Thread init.
+     * No-op once our loader is in place. */
+    loader_migrate_maybe();
 
     /* Register VFS eventfd early with enough slots for OpenThread.
      * The OT platform uses ~3 eventfds.

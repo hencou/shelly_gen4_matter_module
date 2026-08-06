@@ -11,34 +11,26 @@
 # pulls the app from build/, adds an empty filesystem image, and writes
 # shelly-gen4-matter-module-v<version>-ota.zip.
 #
-# ESP-IDF BOOTLOADER MODE: this package installs our own ESP-IDF bootloader.
-#  - Ships boot (build/bootloader/bootloader.bin) at offset 0x0. The stock
-#    updater flashes it over the stock "Shelly OS loader", so from then on the
-#    device boots via the standard ESP-IDF bootloader + otadata. This removes
-#    the dependency on the reverse-engineered stock "SH0S" boot-select and on
-#    any future changes to the Shelly loader: our OTA simply uses
-#    esp_ota_set_boot_partition(). Return-to-stock re-flashes the stock app; the
-#    Shelly loader is then reinstalled by the stock firmware's own next update.
-#  - Ships our app into the INACTIVE slot (app_1/fs_1). The stock v2.0 updater
-#    runs from app_0 and cannot rewrite the slot it is executing from, so a part
-#    with ptn "app_0" is silently skipped (confirmed in the field: after such a
-#    package only our bootloader landed, both app slots still held the stock
-#    app). Targeting app_1 is the slot the updater can actually write.
-#  - Ships an otadata that selects app_1. A fresh all-0xFF otadata makes the
-#    ESP-IDF bootloader fall back to app_0 (the first bootable slot) -- which
-#    here still holds the stock app -- so it must explicitly point at app_1
-#    where our app was flashed. See otadata_select_slot().
-#  - No pt (partition table) part is shipped. The stock v2.0 partition table
-#    carries an MD5 entry, a scratch partition and per-partition encrypt flags;
-#    our build's table has none of those, so the stock v2.0 updater rejects it
-#    ("Unable to parse pt"). Our layout already matches the stock table (app_0
-#    @0x20000, nvs @0x14000, otadata @0x11000, ...), and our bootloader reads
-#    the table from 0x10000, so the device's own table is kept as-is.
-#  - These units are NOT flash-encrypted (confirmed: the on-flash bootloader is
-#    byte-identical to the plaintext stock bootloader.bin), so writing our
-#    plaintext bootloader is safe.
+# BOOTLOADER-LESS INSTALL: this package does NOT ship or replace the bootloader.
+#  - Only manifest.json, app.bin and fs.img are shipped. The stock "Shelly OS
+#    loader" at 0x0 is left in place, so the stock v2.0 updater installs our app
+#    into the inactive slot and points its own SH0S boot-select at it -- exactly
+#    the A/B flow it uses for a normal stock update, which reliably boots the new
+#    app. Shipping our own bootloader instead breaks this: the stock updater is
+#    SH0S-driven, and an ESP-IDF bootloader cannot follow the SH0S boot-select,
+#    so the device rolls back to stock (confirmed in the field).
+#  - No otadata part: the stock loader keeps its SH0S boot state; writing an
+#    ESP-IDF otadata here would corrupt it.
+#  - No pt (partition table) part: the stock v2.0 updater rejects our table
+#    ("Unable to parse pt"), and our layout already matches the stock one.
+#  - app/fs use ptn app_0/fs_0 (as the stock package itself does); the stock
+#    updater does its own A/B selection and writes the inactive slot regardless.
 #
-import binascii, datetime, hashlib, json, os, struct, sys, tempfile, zipfile
+# The firmware reaches the ESP-IDF-bootloader end state on its own: on first
+# boot under the stock loader it performs a one-time self-migration (writes our
+# ESP-IDF bootloader to 0x0 + valid otadata, then reboots). See loader_migrate.c.
+#
+import datetime, hashlib, json, os, sys, tempfile, zipfile
 
 # Fixed for the Shelly 1 Gen4 hardware.
 APP_CODE     = "S1G4"
@@ -48,34 +40,11 @@ PLATFORM     = "esp32c6"
 # The real firmware version is in the app and the zip filename, not here.
 MANIFEST_VER = "99.0.0"
 # Must match the stock Shelly 1 Gen4 partition layout.
-NVS_SIZE     = 0xC000
-FS_SIZE      = 0xE0000
-OTADATA_SIZE = 0x2000
-SECTOR_SIZE  = 0x1000
-# The stock updater runs from app_0, so it can only write the other slot.
-TARGET_SLOT  = 1  # app_1 / fs_1
+NVS_SIZE = 0xC000
+FS_SIZE  = 0xE0000
 # No flash encryption on these units. Left true because that
 # is the correct value if a unit ever ships with encryption enabled.
 ENCRYPT  = True
-
-
-def otadata_select_slot(slot, app_count=2):
-    """ESP-IDF otadata image (two sectors) that boots the given OTA app slot.
-
-    The bootloader picks the highest valid ota_seq and maps it to a slot via
-    (ota_seq - 1) % app_count, so seq = slot + 1 selects `slot`. The entry lives
-    in sector 0; sector 1 is left erased (all-0xFF = invalid). ota_state stays
-    0xFFFFFFFF (UNDEFINED = boots without a pending-verify gate), matching what
-    ESP-IDF's otatool writes. crc is crc32 over the ota_seq field only.
-    """
-    seq = slot + 1
-    img = bytearray(b"\xff" * OTADATA_SIZE)
-    crc = binascii.crc32(struct.pack("<I", seq), 0xFFFFFFFF) & 0xFFFFFFFF
-    # esp_ota_select_entry_t: ota_seq[4] seq_label[20] ota_state[4] crc[4]
-    entry = struct.pack("<I", seq) + b"\xff" * 20 + struct.pack("<I", 0xFFFFFFFF) \
-            + struct.pack("<I", crc)
-    img[0:len(entry)] = entry
-    return bytes(img)
 
 
 def digest(path):
@@ -93,7 +62,6 @@ def main():
     project_name, version = desc["project_name"], desc["project_version"]
 
     src = {
-        "bootloader.bin":      os.path.join(build, "bootloader", "bootloader.bin"),
         "app.bin":             os.path.join(build, f"{project_name}.bin"),
     }
     missing = [p for p in src.values() if not os.path.isfile(p)]
@@ -107,10 +75,7 @@ def main():
         fs_img = os.path.join(tmp, "fs.img")
         with open(fs_img, "wb") as f:
             f.write(b"\xff" * FS_SIZE)
-        boot_state = os.path.join(tmp, "boot_state.bin")
-        with open(boot_state, "wb") as f:
-            f.write(otadata_select_slot(TARGET_SLOT))
-        paths = {**src, "fs.img": fs_img, "boot_state.bin": boot_state}
+        paths = {**src, "fs.img": fs_img}
 
         def part(member, **extra):
             size, sha = digest(paths[member])
@@ -124,15 +89,13 @@ def main():
             "build_id": now.strftime("%Y%m%d-%H%M%S") + f"/{stem}",
             "build_timestamp": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "parts": {
-                # min_version 0.0.0: the stock updater always writes our boot,
-                # replacing the stock loader at 0x0 (confirmed in the field).
-                "boot":    part("bootloader.bin", type="boot", addr=0x0,
-                                min_version="0.0.0", encrypt=ENCRYPT),
-                "otadata": part("boot_state.bin", type="otadata", ptn="otadata",
-                                encrypt=ENCRYPT),
+                # No boot/otadata/pt parts: keep the stock Shelly OS loader and
+                # its SH0S boot state so the stock updater's A/B flow boots our
+                # app. app/fs use app_0/fs_0 as the stock package does; the
+                # updater writes the inactive slot itself.
                 "nvs":     {"type": "nvs", "size": NVS_SIZE, "fill": 255, "ptn": "nvs"},
-                "app":     part("app.bin", type="app", ptn=f"app_{TARGET_SLOT}", encrypt=ENCRYPT),
-                "fs":      part("fs.img", type="fs", ptn=f"fs_{TARGET_SLOT}", fs_size=FS_SIZE, encrypt=ENCRYPT),
+                "app":     part("app.bin", type="app", ptn="app_0", encrypt=ENCRYPT),
+                "fs":      part("fs.img", type="fs", ptn="fs_0", fs_size=FS_SIZE, encrypt=ENCRYPT),
             },
             "compatible": COMPATIBLE,
         }
@@ -140,7 +103,7 @@ def main():
         with open(manifest_path, "w") as f:
             json.dump(manifest, f, indent=2)
 
-        order = ["manifest.json", "bootloader.bin", "boot_state.bin", "app.bin", "fs.img"]
+        order = ["manifest.json", "app.bin", "fs.img"]
         src_for = {**paths, "manifest.json": manifest_path}
         with zipfile.ZipFile(zip_out, "w", zipfile.ZIP_STORED) as z:
             for member in order:

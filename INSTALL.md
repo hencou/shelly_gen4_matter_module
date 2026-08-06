@@ -73,12 +73,21 @@ The Shelly 1 Gen4 has **7 holes in a row** on the back — this is the **J6 conn
 
 > **UART is no longer the only install route.** You can now install straight
 > from the stock Shelly web UI with the package built by
-> `tools/make-webui-ota-zip.py` (it installs our ESP-IDF bootloader over the
-> stock loader and keeps the device's own partition table) — see the README's
+> `tools/make-webui-ota-zip.py` — see the README's
 > [Firmware updates](README.md#firmware-updates) section. That is the only way
 > to flash a **Shelly 1 Mini Gen4** (no accessible UART pads). UART flashing
 > below is still recommended when you want to make a full 8 MB backup for a
 > guaranteed return to stock.
+>
+> The web-UI package ships **no bootloader**: it keeps the stock "Shelly OS
+> loader" so the stock updater's own A/B flow reliably boots our app in the
+> inactive slot. On the first boot the firmware then performs a **one-time
+> self-migration** — it writes our ESP-IDF bootloader to `0x0` plus valid
+> otadata and reboots, so all later OTA uses the standard ESP-IDF path and no
+> longer depends on the Shelly loader. That single bootloader write at `0x0` is
+> the only irreversible step; keep the full 8 MB UART backup as a safety net.
+> A device that already runs our ESP-IDF loader must first be restored to fully
+> stock (via that backup) before a bootloader-less package can install.
 >
 > **First update the device to stock Shelly v2.0, then flash our package.**
 > Factory units can ship as a dual-variant build (`S1G4` Matter + `S1G4ZB`

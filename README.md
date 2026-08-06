@@ -104,9 +104,11 @@ idf.py build
 python3 tools/make-webui-ota-zip.py     # → shelly-gen4-matter-module-v<version>-ota.zip
 ```
 
-The package installs our own **ESP-IDF bootloader** (over the stock "Shelly OS
-loader" at `0x0`) plus `otadata`, `nvs`, `app` and `fs`; it keeps the device's
-own (stock) partition table. From then on the module boots via the standard
+The package ships **no bootloader** — only `nvs`, `app` and `fs`. It keeps the
+stock "Shelly OS loader" so the stock updater's own A/B flow reliably boots our
+app in the inactive slot. On the first boot the firmware then performs a
+**one-time self-migration**: it writes our ESP-IDF bootloader to `0x0` plus
+valid `otadata` and reboots. From then on the module boots via the standard
 ESP-IDF bootloader + `otadata`, so OTA no longer depends on the stock loader's
 proprietary `SH0S` boot-select or on future Shelly loader changes. This is the
 only way to install on a **Shelly 1 Mini Gen4**, which has no accessible UART pads.
@@ -268,9 +270,9 @@ idf.py build
 python3 tools/make-webui-ota-zip.py     # → shelly-gen4-matter-module-v<version>-ota.zip
 ```
 
-The package installs our own **ESP-IDF bootloader** at `0x0` (replacing the stock "Shelly OS loader") together with `otadata`, `nvs`, `app` and `fs`; it ships **no partition table** (the stock v2.0 updater rejects a foreign one, and our layout already matches the device's own table). From then on the module boots via the standard ESP-IDF bootloader + `otadata`, so OTA uses plain `esp_ota_set_boot_partition()` and no longer depends on the reverse-engineered stock `SH0S` boot-select or on future Shelly loader changes. These units are not flash-encrypted, so writing our plaintext bootloader is safe. This is the route used for the very first install from stock Shelly firmware (see [First flash](#1-first-flash)) and works regardless of whether the unit runs stock 1.5/1.7/2.0.
+The package ships **no bootloader** and **no partition table** — only `nvs`, `app` and `fs`. It keeps the stock "Shelly OS loader" so the stock v2.0 updater's own A/B flow installs our app into the inactive slot and boots it (shipping a foreign bootloader instead breaks this: the stock updater is `SH0S`-driven and an ESP-IDF bootloader cannot follow that boot-select). On the first boot under the stock loader the firmware performs a **one-time self-migration** (`main/loader_migrate.c`): it writes a valid ESP-IDF `otadata` for the running slot, flashes our embedded ESP-IDF bootloader to `0x0`, and reboots. From then on the module boots via the standard ESP-IDF bootloader + `otadata`, so OTA uses plain `esp_ota_set_boot_partition()` and no longer depends on the reverse-engineered stock `SH0S` boot-select or on future Shelly loader changes. These units are not flash-encrypted, so writing our plaintext bootloader is safe. This is the route used for the very first install from stock Shelly firmware (see [First flash](#1-first-flash)) and works regardless of whether the unit runs stock 1.5/1.7/2.0.
 
-> Older modules that were installed with a previous package (which preserved the stock loader) keep running the stock `SH0S` loader; the firmware auto-detects which bootloader is present and picks the matching boot-select, so OTA keeps working on both. They converge to the ESP-IDF bootloader the next time they are re-installed from stock with this package.
+> The migration is idempotent and self-terminating: once our ESP-IDF bootloader is at `0x0` the loader detection no longer sees the stock loader, so it never runs again. If a migration write ever fails, the app keeps running fine under the stock loader (OTA then uses `SH0S`); the firmware auto-detects which bootloader is present and picks the matching boot-select, so both paths keep working.
 
 > **Install from stock: update to stock v2.0 first.** On a factory unit that still
 > carries the dual-variant layout (`S1G4` Matter + `S1G4ZB` Zigbee), stock 2.0's
