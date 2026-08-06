@@ -73,8 +73,8 @@ The Shelly 1 Gen4 has **7 holes in a row** on the back — this is the **J6 conn
 
 > **UART is no longer the only install route.** You can now install straight
 > from the stock Shelly web UI with the package built by
-> `tools/make-webui-ota-zip.py` (it keeps the stock partition table and OS
-> loader and manages the stock `SH0S` boot-select) — see the README's
+> `tools/make-webui-ota-zip.py` (it installs our ESP-IDF bootloader over the
+> stock loader and keeps the device's own partition table) — see the README's
 > [Firmware updates](README.md#firmware-updates) section. That is the only way
 > to flash a **Shelly 1 Mini Gen4** (no accessible UART pads). UART flashing
 > below is still recommended when you want to make a full 8 MB backup for a
@@ -89,7 +89,7 @@ The Shelly 1 Gen4 has **7 holes in a row** on the back — this is the **J6 conn
 > **Once the firmware runs, all future updates are done over the air via the
 > device's own OTA page and Matter OTA — no UART needed** (see section 10).
 
-⚠️ **Only UART flashing can back up the stock Shelly firmware first.** If you might ever want to return to stock, do the UART backup below **before** flashing anything. Restoring stock later also requires UART (there is no way back to stock over the air).
+⚠️ **Only UART flashing can back up the stock Shelly firmware first.** If you might ever want to return to stock, do the UART backup below **before** flashing anything. The management page can also reflash an original Shelly package over the air (README §"Return to stock"), but that path is not hardware-tested, so the full 8 MB UART backup remains the guaranteed way back.
 
 > **Note**: the J6 pinout below was verified on hardware revision `v0.1.2`
 > (printed on the PCB).

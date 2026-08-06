@@ -395,14 +395,18 @@ static esp_err_t do_ota_from_url(const char *url)
     };
     esp_err_t err = esp_https_ota(&ota_cfg);
     if (err == ESP_OK) {
-        /* esp_https_ota() set the IDF otadata boot slot; mirror that into the
-         * stock Shelly SH0S boot-select so the stock loader boots it too. */
-        const esp_partition_t *boot = esp_ota_get_boot_partition();
-        if (boot) {
-            int slot = (int)boot->subtype - (int)ESP_PARTITION_SUBTYPE_APP_OTA_MIN;
-            esp_err_t se = shelly_boot_switch_slot(slot);
-            ESP_LOGI(TAG, "OTA OK: SH0S boot-select app_%d -> %s",
-                     slot, esp_err_to_name(se));
+        /* esp_https_ota() already set the ESP-IDF otadata boot slot, which is
+         * all the ESP-IDF bootloader needs. Only on devices still carrying the
+         * stock Shelly OS loader do we additionally mirror the slot into its
+         * SH0S boot-select (the stock loader ignores the IDF otadata format). */
+        if (shelly_loader_present()) {
+            const esp_partition_t *boot = esp_ota_get_boot_partition();
+            if (boot) {
+                int slot = (int)boot->subtype - (int)ESP_PARTITION_SUBTYPE_APP_OTA_MIN;
+                esp_err_t se = shelly_boot_switch_slot(slot);
+                ESP_LOGI(TAG, "OTA OK: SH0S boot-select app_%d -> %s",
+                         slot, esp_err_to_name(se));
+            }
         }
         ESP_LOGI(TAG, "OTA OK, rebooting");
         return ESP_OK;

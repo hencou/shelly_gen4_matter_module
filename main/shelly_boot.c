@@ -8,8 +8,47 @@
 #include "esp_log.h"
 #include "esp_partition.h"
 #include "esp_rom_crc.h"
+#include "esp_flash.h"
 
 static const char *TAG = "shelly_boot";
+
+/* Identifying string embedded in the stock "Shelly OS loader" bootloader
+ * image. A plain ESP-IDF bootloader does not contain it. */
+#define SHELLY_LOADER_SIG   "Shelly OS loader"
+#define BOOTLOADER_SCAN_LEN 0x8000u   /* covers the whole 2nd-stage bootloader */
+
+bool shelly_loader_present(void)
+{
+    static int cached = -1;   /* -1 unknown, 0 IDF loader, 1 stock loader */
+    if (cached >= 0) return cached == 1;
+
+    const size_t chunk = 0x1000u;
+    const size_t siglen = sizeof(SHELLY_LOADER_SIG) - 1;
+    uint8_t *buf = malloc(chunk + siglen);
+    if (!buf) return false;   /* do not cache: retry next time */
+
+    bool found = false;
+    size_t carry = 0;   /* bytes kept from the previous chunk for overlap */
+    for (uint32_t addr = 0; addr < BOOTLOADER_SCAN_LEN && !found; addr += chunk) {
+        if (esp_flash_read(NULL, buf + carry, addr, chunk) != ESP_OK) break;
+        size_t total = carry + chunk;
+        if (total >= siglen) {
+            for (size_t i = 0; i + siglen <= total; i++) {
+                if (memcmp(buf + i, SHELLY_LOADER_SIG, siglen) == 0) { found = true; break; }
+            }
+        }
+        /* keep the last (siglen-1) bytes so a signature split across the
+         * chunk boundary is still matched. */
+        carry = siglen - 1;
+        memmove(buf, buf + total - carry, carry);
+    }
+    free(buf);
+
+    cached = found ? 1 : 0;
+    ESP_LOGI(TAG, "bootloader at 0x0: %s", found ? "stock Shelly OS loader"
+                                                 : "ESP-IDF");
+    return found;
+}
 
 /* Snapshot of a valid SH0S entry taken at boot; used as a template when the
  * live otadata sectors have been overwritten by an IDF OTA path. */

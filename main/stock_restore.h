@@ -14,14 +14,19 @@ extern "C" {
  * consumes) uploaded to the management page and writes it back so the device
  * boots stock Shelly firmware again — without needing a full UART backup.
  *
- * This only works on units that still carry the stock Shelly OS loader (i.e.
- * installed via the web-UI package, which preserves it). The bootloader and
- * the factory `shelly` partition are never touched:
- *   - the stock app is written to the inactive app slot (transparent flash
- *     encryption applies, because the write is done by the running firmware);
+ * The bootloader, partition table and the factory `shelly` partition are never
+ * touched:
+ *   - the stock app is written to the inactive app slot (never the running
+ *     one, so an aborted upload is harmless);
  *   - the matching filesystem partition is rewritten;
  *   - the "boot" / "pt" parts in the package are intentionally skipped;
- *   - the stock SH0S boot-select is pointed at the freshly written slot.
+ *   - the boot slot is committed via the ESP-IDF bootloader's otadata
+ *     (esp_ota_set_boot_partition) on our installs, or via the stock SH0S
+ *     boot-select on units still running the stock Shelly OS loader.
+ *
+ * On our (ESP-IDF bootloader) installs the stock app runs under our bootloader;
+ * the stock Shelly OS loader is reinstalled by the stock firmware's own next
+ * update, so we never rewrite the bootloader from here.
  *
  * Nothing is committed until the app image is fully written and its SHA-256
  * verified, so a failed/aborted upload leaves the running slot untouched.

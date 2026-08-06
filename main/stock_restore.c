@@ -182,15 +182,20 @@ static esp_err_t write_fs(httpd_req_t *req, size_t size,
     esp_err_t err = esp_partition_erase_range(fs_part, 0, fs_part->size);
     if (err != ESP_OK) return err;
 
+    /* Heap-allocate the flash block + receive buffers: this runs on the HTTP
+     * server task whose stack is only a few KB, so a 4 KB block on the stack
+     * (plus the caller's manifest_t) overflows it and trips the stack guard. */
+    uint8_t *block = malloc(FS_WRITE_BLOCK);
+    char *buf = malloc(1024);
+    if (!block || !buf) { free(block); free(buf); return ESP_ERR_NO_MEM; }
+
     mbedtls_sha256_context sha;
     mbedtls_sha256_init(&sha);
     mbedtls_sha256_starts(&sha, 0);
 
-    uint8_t block[FS_WRITE_BLOCK];
     size_t blk = 0, off = 0, remaining = size;
-    char buf[1024];
     while (remaining > 0) {
-        size_t chunk = remaining < sizeof(buf) ? remaining : sizeof(buf);
+        size_t chunk = remaining < 1024 ? remaining : 1024;
         if ((err = rx_exact(req, buf, chunk)) != ESP_OK) goto out;
         mbedtls_sha256_update(&sha, (const uint8_t *)buf, chunk);
         for (size_t i = 0; i < chunk; i++) {
@@ -219,6 +224,8 @@ static esp_err_t write_fs(httpd_req_t *req, size_t size,
     }
 out:
     mbedtls_sha256_free(&sha);
+    free(block);
+    free(buf);
     return err;
 }
 
@@ -300,13 +307,25 @@ esp_err_t stock_restore_handle_upload(httpd_req_t *req)
 
     if (!have_manifest || !wrote_app) { fail(req, "package has no app image"); return ESP_FAIL; }
 
-    /* Commit: point the stock loader at the freshly written slot. This is the
-     * single irreversible step and only runs after the app verified. */
-    esp_err_t err = shelly_boot_switch_slot(slot);
-    if (err != ESP_OK) {
-        fail(req, "not running the stock Shelly loader — return-to-stock needs a "
-                  "web-UI install; restore your full UART backup instead");
-        return ESP_FAIL;
+    /* Commit: point the bootloader at the freshly written stock slot. This is
+     * the single irreversible step and only runs after the app verified.
+     *  - ESP-IDF bootloader (our installs): standard otadata. The stock app now
+     *    boots under our loader; a subsequent stock firmware update reinstalls
+     *    the Shelly OS loader itself, so we never rewrite the bootloader here.
+     *  - stock Shelly OS loader (older installs): SH0S boot-select. */
+    esp_err_t err;
+    if (shelly_loader_present()) {
+        err = shelly_boot_switch_slot(slot);
+        if (err != ESP_OK) {
+            fail(req, "SH0S boot-select failed — restore your full UART backup instead");
+            return ESP_FAIL;
+        }
+    } else {
+        err = esp_ota_set_boot_partition(app_part);
+        if (err != ESP_OK) {
+            fail(req, "could not set boot partition — restore your full UART backup instead");
+            return ESP_FAIL;
+        }
     }
 
     /* Clear our NVS so stock starts clean (the factory `shelly` partition and
