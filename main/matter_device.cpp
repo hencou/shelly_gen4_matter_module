@@ -100,13 +100,16 @@ using namespace esp_matter::endpoint;
 using namespace chip;
 using namespace chip::app::Clusters;
 
-/* Mirror the Matter OTA requestor's applied slot into the stock loader's SH0S
- * boot-select. Runs on the CHIP task when the OTA image has been applied. */
+/* The Matter OTA requestor applies images with esp_ota_set_boot_partition(),
+ * which is exactly what the ESP-IDF bootloader needs. On devices still running
+ * the stock Shelly OS loader (older installs) that loader ignores the IDF
+ * otadata format, so mirror the applied slot into its SH0S boot-select too. */
 static void shelly_ota_apply_handler(const chip::DeviceLayer::ChipDeviceEvent *event,
                                      intptr_t /*arg*/)
 {
     if (event->Type != chip::DeviceLayer::DeviceEventType::kOtaStateChanged) return;
     if (event->OtaStateChanged.newState != chip::DeviceLayer::kOtaApplyComplete) return;
+    if (!shelly_loader_present()) return;   /* ESP-IDF bootloader: nothing to do */
 
     const esp_partition_t *boot = esp_ota_get_boot_partition();
     if (!boot) return;

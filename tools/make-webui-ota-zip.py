@@ -11,26 +11,25 @@
 # pulls the app from build/, adds an empty filesystem image, and writes
 # shelly-gen4-matter-module-v<version>-ota.zip.
 #
-# STOCK-LOADER MODE: this package PRESERVES the stock Shelly OS loader.
-#  - No boot part is shipped. Earlier we bundled bootloader.bin with
-#    min_version 0.0.0 hoping the stock updater would treat it as older and
-#    skip it, but in practice the updater flashed our ESP-IDF bootloader over
-#    the stock loader at offset 0x0. The ESP-IDF bootloader cannot read the
-#    stock "SH0S" boot-select record our firmware maintains, so after an OTA it
-#    reported "otadata invalid" and reverted to app_0. Shipping no boot part at
-#    all leaves the stock SH0S loader untouched, which is what the SH0S
-#    boot-select (main/shelly_boot.c) needs to switch slots correctly.
-#  - No otadata part is shipped. The stock loader uses its own "SH0S" boot-
-#    select record in the otadata partition; overwriting it with the ESP-IDF
-#    otadata format would leave the loader with no valid record. The running
-#    firmware maintains SH0S at runtime (see main/shelly_boot.c) after OTA.
+# ESP-IDF BOOTLOADER MODE: this package installs our own ESP-IDF bootloader.
+#  - Ships boot (build/bootloader/bootloader.bin) at offset 0x0. The stock
+#    updater flashes it over the stock "Shelly OS loader", so from then on the
+#    device boots via the standard ESP-IDF bootloader + otadata. This removes
+#    the dependency on the reverse-engineered stock "SH0S" boot-select and on
+#    any future changes to the Shelly loader: our OTA simply uses
+#    esp_ota_set_boot_partition(). Return-to-stock re-flashes the stock app; the
+#    Shelly loader is then reinstalled by the stock firmware's own next update.
+#  - Ships otadata (build/ota_data_initial.bin). Fresh (all-0xFF) otadata makes
+#    the ESP-IDF bootloader boot app_0, where the app part below is flashed.
 #  - No pt (partition table) part is shipped. The stock v2.0 partition table
-#    carries an MD5 entry, a scratch partition and per-partition encrypt flags
-#    (the unit runs with flash encryption). Our build's table has none of those,
-#    so the stock v2.0 updater rejects it ("Unable to parse pt"), and imposing
-#    flags=0 on an encrypted unit would break boot. Our layout already matches
-#    the stock table (app_0 @0x20000, nvs @0x14000, ...), so we keep the device's
-#    own table and only flash app/fs/nvs into it.
+#    carries an MD5 entry, a scratch partition and per-partition encrypt flags;
+#    our build's table has none of those, so the stock v2.0 updater rejects it
+#    ("Unable to parse pt"). Our layout already matches the stock table (app_0
+#    @0x20000, nvs @0x14000, otadata @0x11000, ...), and our bootloader reads
+#    the table from 0x10000, so the device's own table is kept as-is.
+#  - These units are NOT flash-encrypted (confirmed: the on-flash bootloader is
+#    byte-identical to the plaintext stock bootloader.bin), so writing our
+#    plaintext bootloader is safe.
 #
 import datetime, hashlib, json, os, sys, tempfile, zipfile
 
@@ -64,6 +63,8 @@ def main():
     project_name, version = desc["project_name"], desc["project_version"]
 
     src = {
+        "bootloader.bin":      os.path.join(build, "bootloader", "bootloader.bin"),
+        "boot_state.bin":      os.path.join(build, "ota_data_initial.bin"),
         "app.bin":             os.path.join(build, f"{project_name}.bin"),
     }
     missing = [p for p in src.values() if not os.path.isfile(p)]
@@ -91,6 +92,12 @@ def main():
             "build_id": now.strftime("%Y%m%d-%H%M%S") + f"/{stem}",
             "build_timestamp": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "parts": {
+                # min_version 0.0.0: the stock updater always writes our boot,
+                # replacing the stock loader at 0x0 (confirmed in the field).
+                "boot":    part("bootloader.bin", type="boot", addr=0x0,
+                                min_version="0.0.0", encrypt=ENCRYPT),
+                "otadata": part("boot_state.bin", type="otadata", ptn="otadata",
+                                encrypt=ENCRYPT),
                 "nvs":     {"type": "nvs", "size": NVS_SIZE, "fill": 255, "ptn": "nvs"},
                 "app":     part("app.bin", type="app", ptn="app_0", encrypt=ENCRYPT),
                 "fs":      part("fs.img", type="fs", ptn="fs_0", fs_size=FS_SIZE, encrypt=ENCRYPT),
@@ -101,7 +108,7 @@ def main():
         with open(manifest_path, "w") as f:
             json.dump(manifest, f, indent=2)
 
-        order = ["manifest.json", "app.bin", "fs.img"]
+        order = ["manifest.json", "bootloader.bin", "boot_state.bin", "app.bin", "fs.img"]
         src_for = {**paths, "manifest.json": manifest_path}
         with zipfile.ZipFile(zip_out, "w", zipfile.ZIP_STORED) as z:
             for member in order:

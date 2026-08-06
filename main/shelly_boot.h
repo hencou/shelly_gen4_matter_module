@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esp_err.h"
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,6 +44,21 @@ esp_err_t shelly_boot_switch_slot(int slot);
  * stock Shelly loader, so IDF-bootloader builds keep their normal behaviour.
  */
 void shelly_boot_snapshot(void);
+
+/*
+ * Detect which second-stage bootloader is installed at flash offset 0x0.
+ *
+ * Returns true when the stock "Shelly OS loader" is present (its identifying
+ * string is embedded in the bootloader image), false when a plain ESP-IDF
+ * bootloader is present. The result is read from flash once and cached.
+ *
+ * Callers use this to pick the correct boot-select mechanism: SH0S
+ * (shelly_boot_switch_slot) on the stock loader, esp_ota_set_boot_partition()
+ * on the ESP-IDF bootloader. New installs ship the ESP-IDF bootloader; devices
+ * flashed with older packages may still carry the stock loader, so both paths
+ * must keep working.
+ */
+bool shelly_loader_present(void);
 
 #ifdef __cplusplus
 }

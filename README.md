@@ -104,10 +104,12 @@ idf.py build
 python3 tools/make-webui-ota-zip.py     # → shelly-gen4-matter-module-v<version>-ota.zip
 ```
 
-The package keeps the device's own (stock) partition table and OS loader — it
-only writes `nvs`, `app` and `fs` — and the firmware then manages the stock
-`SH0S` boot-select so the module boots our app. This is the only way to install
-on a **Shelly 1 Mini Gen4**, which has no accessible UART pads.
+The package installs our own **ESP-IDF bootloader** (over the stock "Shelly OS
+loader" at `0x0`) plus `otadata`, `nvs`, `app` and `fs`; it keeps the device's
+own (stock) partition table. From then on the module boots via the standard
+ESP-IDF bootloader + `otadata`, so OTA no longer depends on the stock loader's
+proprietary `SH0S` boot-select or on future Shelly loader changes. This is the
+only way to install on a **Shelly 1 Mini Gen4**, which has no accessible UART pads.
 
 > ⚠️ **Update the device to stock Shelly v2.0 first, then flash our package.**
 > Fresh units often ship as a *dual-variant* build with a Matter app (`S1G4`) in
@@ -121,7 +123,8 @@ on a **Shelly 1 Mini Gen4**, which has no accessible UART pads.
 
 > ✅ Verified on a **Shelly 1 Gen4** on stock **v2.0** (both after a factory-2.0
 > unit was updated 1.5.99 → 2.0, and on a unit already running 2.0). The layout is
-> identical on stock 1.5/1.7/2.0 (same offsets, same SH0S structure).
+> identical on stock 1.5/1.7/2.0 (same offsets). These units are not
+> flash-encrypted, so writing our plaintext ESP-IDF bootloader is safe.
 > Keep a full backup before flashing (see the warning under
 > [Firmware updates](#firmware-updates)).
 
@@ -231,8 +234,7 @@ Once the custom firmware is running you can update it three ways. They all flash
 > ⚠️ **Keep a full UART backup as your guaranteed way back.** The management
 > page can flash an original Shelly firmware package back onto the device (see
 > [Return to stock](#4-return-to-stock-shelly-firmware) below), but that path is
-> **not hardware-tested** and only works on units that still carry the stock
-> loader (i.e. installed via the web-UI package). The one route that always
+> **not hardware-tested**. The one route that always
 > works is restoring the full 8 MB UART backup of that exact device, so make
 > that backup **before** the first flash (with
 > [ESPConnect](https://thelastoutpostworkshop.github.io/microcontroller_devkit/espconnect/)
@@ -266,7 +268,9 @@ idf.py build
 python3 tools/make-webui-ota-zip.py     # → shelly-gen4-matter-module-v<version>-ota.zip
 ```
 
-The package ships **no bootloader and no partition table**, so it keeps the device's own stock partition table and stock OS loader untouched and only writes `nvs`, `app` and `fs`. Preserving the stock loader is essential: it reads its own `SH0S` boot-select record (which the firmware rewrites after each OTA) to switch app slots, whereas the ESP-IDF bootloader would treat that record as invalid `otadata` and revert to the old app. This is the route used for the very first install from stock Shelly firmware (see [First flash](#1-first-flash)) and works regardless of whether the unit runs stock 1.5/1.7/2.0.
+The package installs our own **ESP-IDF bootloader** at `0x0` (replacing the stock "Shelly OS loader") together with `otadata`, `nvs`, `app` and `fs`; it ships **no partition table** (the stock v2.0 updater rejects a foreign one, and our layout already matches the device's own table). From then on the module boots via the standard ESP-IDF bootloader + `otadata`, so OTA uses plain `esp_ota_set_boot_partition()` and no longer depends on the reverse-engineered stock `SH0S` boot-select or on future Shelly loader changes. These units are not flash-encrypted, so writing our plaintext bootloader is safe. This is the route used for the very first install from stock Shelly firmware (see [First flash](#1-first-flash)) and works regardless of whether the unit runs stock 1.5/1.7/2.0.
+
+> Older modules that were installed with a previous package (which preserved the stock loader) keep running the stock `SH0S` loader; the firmware auto-detects which bootloader is present and picks the matching boot-select, so OTA keeps working on both. They converge to the ESP-IDF bootloader the next time they are re-installed from stock with this package.
 
 > **Install from stock: update to stock v2.0 first.** On a factory unit that still
 > carries the dual-variant layout (`S1G4` Matter + `S1G4ZB` Zigbee), stock 2.0's
