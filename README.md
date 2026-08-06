@@ -28,7 +28,7 @@ Each script slot can be configured as one of these Matter endpoint types:
 
 - [esp-matter](https://github.com/espressif/esp-matter) with **Matter 1.5** support
 - [connectedhomeip](https://github.com/project-chip/connectedhomeip) (as submodule within esp-matter)
-- ESP-IDF v5.4.1
+- ESP-IDF v5.5.4
 - Lua 5.4 (compiled as component)
 
 ## Target hardware
