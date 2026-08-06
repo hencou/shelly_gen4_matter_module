@@ -191,9 +191,6 @@ static esp_err_t write_fs(httpd_req_t *req, size_t size,
     if (!fs_part) return ESP_ERR_NOT_FOUND;
     if (size > fs_part->size) return ESP_ERR_INVALID_SIZE;
 
-    esp_err_t err = esp_partition_erase_range(fs_part, 0, fs_part->size);
-    if (err != ESP_OK) return err;
-
     /* Heap-allocate the flash block + receive buffers: this runs on the HTTP
      * server task whose stack is only a few KB, so a 4 KB block on the stack
      * (plus the caller's manifest_t) overflows it and trips the stack guard. */
@@ -205,6 +202,7 @@ static esp_err_t write_fs(httpd_req_t *req, size_t size,
     mbedtls_sha256_init(&sha);
     mbedtls_sha256_starts(&sha, 0);
 
+    esp_err_t err = ESP_OK;
     size_t blk = 0, off = 0, remaining = size;
     while (remaining > 0) {
         size_t chunk = remaining < 1024 ? remaining : 1024;
@@ -213,6 +211,13 @@ static esp_err_t write_fs(httpd_req_t *req, size_t size,
         for (size_t i = 0; i < chunk; i++) {
             block[blk++] = (uint8_t)buf[i];
             if (blk == FS_WRITE_BLOCK) {
+                /* Erase + write one sector, interleaved with recv, so the HTTP
+                 * socket keeps draining. A single upfront erase of the whole
+                 * partition blocks the server task for seconds and stalls the
+                 * TCP upload until it drops (seen as "connection lost" right at
+                 * the app->fs boundary). This mirrors esp_ota_write's own
+                 * erase-as-you-go, which is why the app write does not stall. */
+                if ((err = esp_partition_erase_range(fs_part, off, FS_WRITE_BLOCK)) != ESP_OK) goto out;
                 if ((err = esp_partition_write(fs_part, off, block, blk)) != ESP_OK) goto out;
                 off += blk; blk = 0;
             }
@@ -221,11 +226,20 @@ static esp_err_t write_fs(httpd_req_t *req, size_t size,
     }
     if (blk > 0) {
         /* Pad the final block up to a 16-byte boundary (flash-encryption
-         * requirement); the partition was just erased, so 0xFF padding is fine. */
+         * requirement); the sector is erased first, so 0xFF padding is fine. */
         size_t padded = (blk + 15u) & ~15u;
         memset(block + blk, 0xFF, padded - blk);
+        if ((err = esp_partition_erase_range(fs_part, off, FS_WRITE_BLOCK)) != ESP_OK) goto out;
         if ((err = esp_partition_write(fs_part, off, block, padded)) != ESP_OK) goto out;
+        off += FS_WRITE_BLOCK;
     }
+
+    /* Erase any remaining tail now that the whole upload has been received (no
+     * socket left to stall), so the stock filesystem sees a clean partition
+     * beyond the image -- equivalent to the old full upfront erase. */
+    if (off < fs_part->size &&
+        (err = esp_partition_erase_range(fs_part, off, fs_part->size - off)) != ESP_OK)
+        goto out;
 
     uint8_t digest[32]; char hex[65];
     mbedtls_sha256_finish(&sha, digest);
