@@ -146,50 +146,24 @@ out:
     return ok;
 }
 
-/* Stream `size` bytes of the "app" member into the inactive app slot. */
-static esp_err_t write_app(httpd_req_t *req, size_t size,
-                           const esp_partition_t *app_part, const char *want_sha)
+/* Stream `size` bytes of a member ("app" or "fs") straight into `part` and
+ * verify its SHA-256. The whole partition is written raw with per-sector
+ * erase-then-write, interleaved with the socket recv, so the single-threaded
+ * HTTP task never stops draining the connection for long.
+ *
+ * The app is written raw too (not via esp_ota_begin/esp_ota_end) on purpose:
+ * the stock app is booted by the stock Shelly OS loader (SH0S boot-select) or
+ * the stock otadata we restore below -- never through ESP-IDF's own OTA
+ * metadata -- so esp_ota's upfront full-partition erase and final full-image
+ * re-validation are not needed. Both are multi-second, socket-blocking steps;
+ * for the app they land mid-upload (the fs still follows), which stalled the
+ * browser at the app->fs boundary until the connection dropped (~79%). The
+ * SHA-256 check keeps the same integrity guarantee. */
+static esp_err_t write_member(httpd_req_t *req, size_t size,
+                              const esp_partition_t *part, const char *want_sha)
 {
-    esp_ota_handle_t h;
-    esp_err_t err = esp_ota_begin(app_part, size, &h);
-    if (err != ESP_OK) return err;
-
-    mbedtls_sha256_context sha;
-    mbedtls_sha256_init(&sha);
-    mbedtls_sha256_starts(&sha, 0);
-
-    char buf[1024];
-    size_t remaining = size;
-    while (remaining > 0) {
-        size_t chunk = remaining < sizeof(buf) ? remaining : sizeof(buf);
-        if ((err = rx_exact(req, buf, chunk)) != ESP_OK) { esp_ota_abort(h); goto out; }
-        if ((err = esp_ota_write(h, buf, chunk)) != ESP_OK) { esp_ota_abort(h); goto out; }
-        mbedtls_sha256_update(&sha, (const uint8_t *)buf, chunk);
-        remaining -= chunk;
-    }
-
-    uint8_t digest[32]; char hex[65];
-    mbedtls_sha256_finish(&sha, digest);
-    sha_hex(digest, hex);
-    if (want_sha[0] && strcasecmp(hex, want_sha) != 0) {
-        ESP_LOGE(TAG, "app SHA-256 mismatch");
-        esp_ota_abort(h);
-        err = ESP_ERR_INVALID_CRC;
-        goto out;
-    }
-
-    err = esp_ota_end(h);   /* validates the app image header */
-out:
-    mbedtls_sha256_free(&sha);
-    return err;
-}
-
-/* Stream `size` bytes of the "fs" member into the matching filesystem slot. */
-static esp_err_t write_fs(httpd_req_t *req, size_t size,
-                          const esp_partition_t *fs_part, const char *want_sha)
-{
-    if (!fs_part) return ESP_ERR_NOT_FOUND;
-    if (size > fs_part->size) return ESP_ERR_INVALID_SIZE;
+    if (!part) return ESP_ERR_NOT_FOUND;
+    if (size > part->size) return ESP_ERR_INVALID_SIZE;
 
     /* Heap-allocate the flash block + receive buffers: this runs on the HTTP
      * server task whose stack is only a few KB, so a 4 KB block on the stack
@@ -212,13 +186,9 @@ static esp_err_t write_fs(httpd_req_t *req, size_t size,
             block[blk++] = (uint8_t)buf[i];
             if (blk == FS_WRITE_BLOCK) {
                 /* Erase + write one sector, interleaved with recv, so the HTTP
-                 * socket keeps draining. A single upfront erase of the whole
-                 * partition blocks the server task for seconds and stalls the
-                 * TCP upload until it drops (seen as "connection lost" right at
-                 * the app->fs boundary). This mirrors esp_ota_write's own
-                 * erase-as-you-go, which is why the app write does not stall. */
-                if ((err = esp_partition_erase_range(fs_part, off, FS_WRITE_BLOCK)) != ESP_OK) goto out;
-                if ((err = esp_partition_write(fs_part, off, block, blk)) != ESP_OK) goto out;
+                 * socket keeps draining and the TCP upload never stalls. */
+                if ((err = esp_partition_erase_range(part, off, FS_WRITE_BLOCK)) != ESP_OK) goto out;
+                if ((err = esp_partition_write(part, off, block, blk)) != ESP_OK) goto out;
                 off += blk; blk = 0;
             }
         }
@@ -229,23 +199,23 @@ static esp_err_t write_fs(httpd_req_t *req, size_t size,
          * requirement); the sector is erased first, so 0xFF padding is fine. */
         size_t padded = (blk + 15u) & ~15u;
         memset(block + blk, 0xFF, padded - blk);
-        if ((err = esp_partition_erase_range(fs_part, off, FS_WRITE_BLOCK)) != ESP_OK) goto out;
-        if ((err = esp_partition_write(fs_part, off, block, padded)) != ESP_OK) goto out;
+        if ((err = esp_partition_erase_range(part, off, FS_WRITE_BLOCK)) != ESP_OK) goto out;
+        if ((err = esp_partition_write(part, off, block, padded)) != ESP_OK) goto out;
         off += FS_WRITE_BLOCK;
     }
 
-    /* Erase any remaining tail now that the whole upload has been received (no
-     * socket left to stall), so the stock filesystem sees a clean partition
-     * beyond the image -- equivalent to the old full upfront erase. */
-    if (off < fs_part->size &&
-        (err = esp_partition_erase_range(fs_part, off, fs_part->size - off)) != ESP_OK)
+    /* Erase any remaining tail now that the whole member has been received (no
+     * socket left to stall), so the stock image sees a clean partition beyond
+     * the written data. */
+    if (off < part->size &&
+        (err = esp_partition_erase_range(part, off, part->size - off)) != ESP_OK)
         goto out;
 
     uint8_t digest[32]; char hex[65];
     mbedtls_sha256_finish(&sha, digest);
     sha_hex(digest, hex);
     if (want_sha[0] && strcasecmp(hex, want_sha) != 0) {
-        ESP_LOGE(TAG, "fs SHA-256 mismatch");
+        ESP_LOGE(TAG, "SHA-256 mismatch");
         err = ESP_ERR_INVALID_CRC;
     }
 out:
@@ -372,10 +342,10 @@ esp_err_t stock_restore_handle_upload(httpd_req_t *req)
         const char *want_sha = part ? part->sha : "";
 
         if (part && strcmp(type, "app") == 0) {
-            if (write_app(req, comp_sz, app_part, want_sha) != ESP_OK) RESTORE_FAIL("app write/verify failed");
+            if (write_member(req, comp_sz, app_part, want_sha) != ESP_OK) RESTORE_FAIL("app write/verify failed");
             wrote_app = true;
         } else if (part && strcmp(type, "fs") == 0) {
-            if (write_fs(req, comp_sz, fs_part, want_sha) != ESP_OK) RESTORE_FAIL("fs write/verify failed");
+            if (write_member(req, comp_sz, fs_part, want_sha) != ESP_OK) RESTORE_FAIL("fs write/verify failed");
         } else if (part && strcmp(type, "boot") == 0) {
             if (comp_sz > 0x10000) RESTORE_FAIL("bootloader too large");
             if (capture_part(req, comp_sz, want_sha, &boot_buf, &boot_len) != ESP_OK) RESTORE_FAIL("bootloader capture failed");
