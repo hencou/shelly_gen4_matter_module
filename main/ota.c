@@ -20,6 +20,7 @@
 #include "secrets.h"
 #endif
 #include "button.h"
+#include "sensors.h"
 #include "status_led.h"
 
 #include <string.h>
@@ -653,6 +654,10 @@ static void enter_wifi_mgmt_mode(void)
     ESP_LOGW(TAG, "WiFi management mode — Matter NOT started, WiFi up for 10 min");
 
     button_driver_init(ota_mode_button_cb);
+    /* Matter is not running here, so the sensor tasks get no callbacks — but the
+     * dashboard reads their cached values, which stay empty unless the tasks
+     * run. */
+    sensors_init(NULL, NULL, NULL);
     status_led_set(STATUS_LED_FAST_BLINK);
 
     char ssid[33] = {0}, pass[65] = {0}, url[256] = {0};
@@ -698,6 +703,7 @@ void ota_handle_pending(void)
         return;
     }
     ESP_LOGW(TAG, "OTA pending — entering DEDICATED OTA-mode (Matter NOT started)");
+    ESP_LOGW(TAG, "OTA mode: sensor tasks not started, Hardware tab shows no Add-on readings");
 
     button_driver_init(ota_mode_button_cb);
     status_led_set(STATUS_LED_FAST_BLINK);

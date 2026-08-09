@@ -129,6 +129,58 @@ static int ow_read_bit(void)
     return v;
 }
 
+/* Wiring check: the RX line must mirror what TX drives, because both sides of
+ * the isolator sit on the same open-drain 1-Wire bus. RX staying high while TX
+ * is low means our reset pulse never reaches the bus at all. */
+static void ow_loopback_probe(void)
+{
+    ow_tx_low();
+    esp_rom_delay_us(200);
+    int lo = ow_rx_read();
+    ow_tx_high();
+    esp_rom_delay_us(200);
+    int hi = ow_rx_read();
+    ESP_LOGI(TAG, "1-Wire loopback: TX=0 -> RX=%d (expect 0), TX=1 -> RX=%d (expect 1)",
+             lo, hi);
+}
+
+#define OW_SCAN_SAMPLES   60
+#define OW_SCAN_STEP_US    5
+
+/* Sample the bus for 300 us after a reset pulse instead of at the single 70 us
+ * point, so a presence pulse that falls outside the standard window is still
+ * visible. */
+static void ow_presence_scan(void)
+{
+    int s[OW_SCAN_SAMPLES];
+
+    portENTER_CRITICAL(&s_ow_mux);
+    ow_tx_low();
+    esp_rom_delay_us(480);
+    ow_tx_high();
+    for (int i = 0; i < OW_SCAN_SAMPLES; i++) {
+        s[i] = ow_rx_read();
+        esp_rom_delay_us(OW_SCAN_STEP_US);
+    }
+    portEXIT_CRITICAL(&s_ow_mux);
+    esp_rom_delay_us(410);
+
+    int first = -1, last = -1;
+    for (int i = 0; i < OW_SCAN_SAMPLES; i++) {
+        if (!s[i]) {
+            if (first < 0) first = i;
+            last = i;
+        }
+    }
+    if (first < 0) {
+        ESP_LOGW(TAG, "presence scan: RX stayed high for %d us after the reset pulse",
+                 OW_SCAN_SAMPLES * OW_SCAN_STEP_US);
+    } else {
+        ESP_LOGW(TAG, "presence scan: RX low from %d us to %d us after the reset pulse",
+                 first * OW_SCAN_STEP_US, (last + 1) * OW_SCAN_STEP_US);
+    }
+}
+
 static void ow_write_byte(uint8_t b)
 {
     for (int i = 0; i < 8; i++) {
@@ -234,6 +286,7 @@ static void temp_task(void *arg)
 
     ESP_LOGI(TAG, "1-Wire TX=GPIO%d RX=GPIO%d, RX idle level %d (expect 1)",
              OW_TX, OW_RX, ow_rx_read());
+    ow_loopback_probe();
 
     while (1) {
         int16_t centi = 0;
@@ -245,6 +298,10 @@ static void temp_task(void *arg)
         } else {
             s_temp_valid = false;
             ESP_LOGW(TAG, "DS18B20 read failed: %s (RX level %d)", s_temp_err, ow_rx_read());
+            xSemaphoreTake(s_addon_bus, portMAX_DELAY);
+            ow_loopback_probe();
+            ow_presence_scan();
+            xSemaphoreGive(s_addon_bus);
         }
         vTaskDelay(pdMS_TO_TICKS(TEMP_REPORT_INT_S * 1000));
     }
