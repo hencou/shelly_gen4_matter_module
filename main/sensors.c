@@ -25,8 +25,16 @@
 #include "soc/periph_defs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "sensors";
+
+/* Both Add-on tasks share one bus lock. 1-Wire bit timing is
+ * microsecond-critical, so temp_task holds it for a whole transaction and
+ * occ_task holds it around its 100 ms busy-sample window. Without the lock the
+ * higher-priority occupancy sampling preempts every 1-Wire transaction, so no
+ * DS18B20 read ever completes. */
+static SemaphoreHandle_t s_addon_bus;
 
 /* Latest values cached by the sensor tasks. The management page reads these
  * instead of driving the 1-Wire bus itself — two masters on the same bus race
@@ -60,6 +68,10 @@ static inline void ow_tx_low(void)  { gpio_set_level(OW_TX, 0); }
 static inline void ow_tx_high(void) { gpio_set_level(OW_TX, 1); }
 static inline int  ow_rx_read(void) { return gpio_get_level(OW_RX); }
 
+/* Interrupts stay off for the duration of a time slot: a single preemption
+ * stretches the slot past the DS18B20's tolerance and corrupts the byte. */
+static portMUX_TYPE s_ow_mux = portMUX_INITIALIZER_UNLOCKED;
+
 static bool ow_reset(void)
 {
     /* Wait until bus idle (RX=HIGH) */
@@ -70,17 +82,20 @@ static bool ow_reset(void)
     } while (!ow_rx_read());
 
     /* 480 µs reset pulse via TX */
+    portENTER_CRITICAL(&s_ow_mux);
     ow_tx_low();
     esp_rom_delay_us(480);
     ow_tx_high();
     esp_rom_delay_us(70);
     bool present = !ow_rx_read();
+    portEXIT_CRITICAL(&s_ow_mux);
     esp_rom_delay_us(410);
     return present;
 }
 
 static void ow_write_bit(int b)
 {
+    portENTER_CRITICAL(&s_ow_mux);
     ow_tx_low();
     if (b) {
         esp_rom_delay_us(10);
@@ -91,16 +106,19 @@ static void ow_write_bit(int b)
         ow_tx_high();
         esp_rom_delay_us(5);
     }
+    portEXIT_CRITICAL(&s_ow_mux);
 }
 
 static int ow_read_bit(void)
 {
+    portENTER_CRITICAL(&s_ow_mux);
     ow_tx_low();
     esp_rom_delay_us(3);
     ow_tx_high();
     esp_rom_delay_us(9);
     int v = ow_rx_read();
     esp_rom_delay_us(53);
+    portEXIT_CRITICAL(&s_ow_mux);
     return v;
 }
 
@@ -121,9 +139,28 @@ static uint8_t ow_read_byte(void)
     return v;
 }
 
+static uint8_t ow_crc8(const uint8_t *data, int len)
+{
+    uint8_t crc = 0;
+    for (int i = 0; i < len; i++) {
+        uint8_t b = data[i];
+        for (int j = 0; j < 8; j++) {
+            uint8_t mix = (crc ^ b) & 1;
+            crc >>= 1;
+            if (mix) crc ^= 0x8C;
+            b >>= 1;
+        }
+    }
+    return crc;
+}
+
+/* Reason of the last failed attempt, for the log. */
+static const char *s_temp_err = "no reading yet";
+
 static bool ds18b20_read_centi_c(int16_t *out)
 {
     if (!ow_reset()) {
+        s_temp_err = "no presence pulse";
         return false;
     }
     ow_write_byte(0xCC);  /* Skip ROM */
@@ -131,20 +168,45 @@ static bool ds18b20_read_centi_c(int16_t *out)
     vTaskDelay(pdMS_TO_TICKS(800));  /* 12-bit max conversion */
 
     if (!ow_reset()) {
+        s_temp_err = "no presence pulse after conversion";
         return false;
     }
     ow_write_byte(0xCC);
     ow_write_byte(0xBE);  /* Read Scratchpad */
 
-    uint8_t lsb = ow_read_byte();
-    uint8_t msb = ow_read_byte();
-    /* skip remaining bytes */
-    for (int i = 0; i < 7; i++) (void)ow_read_byte();
+    uint8_t sc[9];
+    for (int i = 0; i < 9; i++) sc[i] = ow_read_byte();
 
-    int16_t raw = (int16_t)((msb << 8) | lsb);
+    if (ow_crc8(sc, 8) != sc[8]) {
+        ESP_LOGW(TAG, "scratchpad CRC mismatch: %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+                 sc[0], sc[1], sc[2], sc[3], sc[4], sc[5], sc[6], sc[7], sc[8]);
+        s_temp_err = "scratchpad CRC mismatch";
+        return false;
+    }
+
+    int16_t raw = (int16_t)((sc[1] << 8) | sc[0]);
+    if (raw == 0x0550) {
+        s_temp_err = "85.00 C power-on default, conversion did not run";
+        return false;
+    }
+
     /* raw is in 1/16 °C. Convert to centi-°C:  raw * 100 / 16 */
     *out = (int16_t)(((int32_t)raw * 100) / 16);
     return true;
+}
+
+/* One transaction while holding the Add-on bus, so the occupancy sampling
+ * cannot run in between, with a few retries for transient bus glitches. */
+static bool ds18b20_read_locked(int16_t *out)
+{
+    for (int attempt = 0; attempt < 3; attempt++) {
+        xSemaphoreTake(s_addon_bus, portMAX_DELAY);
+        bool ok = ds18b20_read_centi_c(out);
+        xSemaphoreGive(s_addon_bus);
+        if (ok) return true;
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    return false;
 }
 
 static temp_cb_t s_temp_cb;
@@ -166,16 +228,19 @@ static void temp_task(void *arg)
     };
     gpio_config(&rx_cfg);
 
+    ESP_LOGI(TAG, "1-Wire TX=GPIO%d RX=GPIO%d, RX idle level %d (expect 1)",
+             OW_TX, OW_RX, ow_rx_read());
+
     while (1) {
         int16_t centi = 0;
-        if (ds18b20_read_centi_c(&centi)) {
+        if (ds18b20_read_locked(&centi)) {
             s_last_temp_centi = centi;
             s_temp_valid = true;
             if (s_temp_cb) s_temp_cb(centi);
             ESP_LOGI(TAG, "temp = %d.%02d °C", centi / 100, abs(centi % 100));
         } else {
             s_temp_valid = false;
-            ESP_LOGW(TAG, "DS18B20 read failed");
+            ESP_LOGW(TAG, "DS18B20 read failed: %s (RX level %d)", s_temp_err, ow_rx_read());
         }
         vTaskDelay(pdMS_TO_TICKS(TEMP_REPORT_INT_S * 1000));
     }
@@ -220,7 +285,9 @@ static void occ_task(void *arg)
 
     int last_occ = -1;
     for (;;) {
+        xSemaphoreTake(s_addon_bus, portMAX_DELAY);
         int duty = measure_duty_pct();
+        xSemaphoreGive(s_addon_bus);
         s_last_duty = duty;
         if (s_analog_cb) s_analog_cb((uint8_t)duty);
         int occ  = (duty >= OCC_DUTY_THRESHOLD_PCT) ? 1 : 0;
@@ -275,7 +342,13 @@ void sensors_init(temp_cb_t temp_cb, occupancy_cb_t occ_cb, analog_cb_t analog_c
         gpio_reset_pin(PIN_ONEWIRE_RX);    /* GPIO16 — 1-Wire RX / UART0 TX */
         gpio_reset_pin(PIN_LD2410_INPUT);   /* GPIO17 — occupancy / UART0 RX */
 
+        s_addon_bus = xSemaphoreCreateMutex();
+        if (!s_addon_bus) {
+            ESP_LOGE(TAG, "cannot create Add-on bus mutex — sensor tasks not started");
+            return;
+        }
+
         xTaskCreate(temp_task, "temp_task", 3072, NULL, 5, NULL);
-        xTaskCreate(occ_task,  "occ_task",  2560, NULL, 6, NULL);
+        xTaskCreate(occ_task,  "occ_task",  2560, NULL, 5, NULL);
     }
 }
