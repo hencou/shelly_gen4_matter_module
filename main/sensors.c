@@ -537,3 +537,219 @@ size_t sensors_ow_probe(char *out, size_t out_size)
     }
     return n;
 }
+
+static bool ow1_read_centi_c(int pin, int16_t *out, const char **err);
+
+/* Candidate MCU pins for the Add-on data-out line. Excludes the SPI flash
+ * (GPIO24-30), USB (GPIO12/13), the 1-Wire RX pin itself and whatever the
+ * active hardware profile drives (relay/switch/button/LED). */
+static const int s_scan_pins[] = { 0, 1, 2, 3, 6, 7, 8, 9, 11, 14, 17, 18, 19, 20, 21, 22, 23 };
+
+static bool scan_pin_allowed(int pin)
+{
+    const hw_profile_t *p = hw_profile();
+    if (pin == OW_RX) return false;
+    if (pin == p->relay_gpio || pin == p->relay2_gpio) return false;
+    if (pin == p->switch_gpio || pin == p->switch2_gpio) return false;
+    if (pin == p->button_gpio || pin == p->led_gpio) return false;
+    if (p->has_pm) {
+        if (pin == p->pm_uart_tx || pin == p->pm_uart_rx) return false;
+        if (pin == p->pm_i2c_sda || pin == p->pm_i2c_scl || pin == p->pm_i2c_irq) return false;
+    }
+    return true;
+}
+
+size_t sensors_ow_pin_scan(char *out, size_t out_size)
+{
+    if (!out || out_size == 0) return 0;
+    out[0] = '\0';
+
+    if (!hw_profile()->has_addon) {
+        return snprintf(out, out_size, "no Add-on on this hardware profile\n");
+    }
+    if (g_bench_mode || !s_addon_bus) {
+        return snprintf(out, out_size, "sensor tasks are not running (bench mode or no Add-on bus)\n");
+    }
+
+    size_t n = 0;
+    n += snprintf(out + n, out_size - n,
+                  "pulling each candidate pin low (open-drain) and watching RX=GPIO%d\n", OW_RX);
+
+    xSemaphoreTake(s_addon_bus, portMAX_DELAY);
+    int hits = 0;
+    for (size_t i = 0; i < sizeof(s_scan_pins) / sizeof(s_scan_pins[0]); i++) {
+        int pin = s_scan_pins[i];
+        if (!scan_pin_allowed(pin)) continue;
+
+        /* Open-drain so a pin that turns out to be driven high externally is
+         * pulled down rather than fought with a push-pull output. */
+        gpio_config_t od = {
+            .pin_bit_mask = (1ULL << pin),
+            .mode         = GPIO_MODE_OUTPUT_OD,
+        };
+        gpio_config(&od);
+        gpio_set_level(pin, 1);
+        esp_rom_delay_us(200);
+        int before = ow_rx_read();
+        gpio_set_level(pin, 0);
+        esp_rom_delay_us(200);
+        int during = ow_rx_read();
+        gpio_set_level(pin, 1);
+        esp_rom_delay_us(200);
+        gpio_reset_pin(pin);
+
+        if (before == 1 && during == 0) {
+            hits++;
+            n += snprintf(out + n, out_size - n, "  GPIO%d pulls RX low  <-- this is the data-out line\n", pin);
+        }
+    }
+
+    /* Restore the pins the Add-on tasks own. */
+    gpio_reset_pin(OW_RX);
+    gpio_reset_pin(PIN_LD2410_INPUT);
+    gpio_config_t rx_cfg = { .pin_bit_mask = (1ULL << OW_RX), .mode = GPIO_MODE_INPUT };
+    gpio_config(&rx_cfg);
+    gpio_config_t occ_cfg = { .pin_bit_mask = (1ULL << PIN_LD2410_INPUT), .mode = GPIO_MODE_INPUT };
+    gpio_config(&occ_cfg);
+    gpio_config_t tx_cfg = { .pin_bit_mask = (1ULL << OW_TX), .mode = GPIO_MODE_OUTPUT };
+    gpio_config(&tx_cfg);
+    ow_tx_high();
+    xSemaphoreGive(s_addon_bus);
+
+    if (hits == 0) {
+        n += snprintf(out + n, out_size - n,
+                      "no pin changes RX: nothing on this MCU reaches the bus, so RX=GPIO%d is "
+                      "driven by the Add-on side alone (isolator powered, bus not shared)\n", OW_RX);
+    }
+
+    /* Second theory: the line is not a split TX/RX pair at all but one
+     * bidirectional open-drain wire on the RX pin. */
+    int16_t centi = 0;
+    const char *err = "unknown";
+    xSemaphoreTake(s_addon_bus, portMAX_DELAY);
+    bool single_ok = ow1_read_centi_c(OW_RX, &centi, &err);
+    xSemaphoreGive(s_addon_bus);
+
+    if (single_ok) {
+        n += snprintf(out + n, out_size - n,
+                      "single-pin 1-Wire on GPIO%d: %d.%02d C  <-- the Add-on is single-wire, "
+                      "not a split TX/RX pair\n", OW_RX, centi / 100, abs(centi % 100));
+    } else {
+        n += snprintf(out + n, out_size - n,
+                      "single-pin 1-Wire on GPIO%d: %s\n", OW_RX, err);
+    }
+
+    err = "unknown";
+    xSemaphoreTake(s_addon_bus, portMAX_DELAY);
+    single_ok = ow1_read_centi_c(OW_TX, &centi, &err);
+    /* ow1_read_centi_c leaves the pin an input; TX must drive again. */
+    gpio_config_t tx_out = { .pin_bit_mask = (1ULL << OW_TX), .mode = GPIO_MODE_OUTPUT };
+    gpio_config(&tx_out);
+    ow_tx_high();
+    xSemaphoreGive(s_addon_bus);
+
+    if (single_ok) {
+        n += snprintf(out + n, out_size - n,
+                      "single-pin 1-Wire on GPIO%d: %d.%02d C  <-- the sensor sits on the TX pin\n",
+                      OW_TX, centi / 100, abs(centi % 100));
+    } else {
+        n += snprintf(out + n, out_size - n,
+                      "single-pin 1-Wire on GPIO%d: %s\n", OW_TX, err);
+    }
+    return n;
+}
+
+/* Classic single-pin 1-Wire on the RX line: some Add-on wiring uses one
+ * bidirectional open-drain pin instead of the isolator's split TX/RX pair.
+ * Worth one attempt before concluding the bus is dead. */
+static bool ow1_reset(int pin)
+{
+    bool present;
+    portENTER_CRITICAL(&s_ow_mux);
+    gpio_set_level(pin, 0);
+    esp_rom_delay_us(480);
+    gpio_set_level(pin, 1);
+    esp_rom_delay_us(70);
+    present = (gpio_get_level(pin) == 0);
+    portEXIT_CRITICAL(&s_ow_mux);
+    esp_rom_delay_us(410);
+    return present;
+}
+
+static void ow1_write_bit(int pin, int b)
+{
+    portENTER_CRITICAL(&s_ow_mux);
+    gpio_set_level(pin, 0);
+    esp_rom_delay_us(b ? 10 : 65);
+    gpio_set_level(pin, 1);
+    esp_rom_delay_us(b ? 55 : 5);
+    portEXIT_CRITICAL(&s_ow_mux);
+}
+
+static void ow1_write_byte(int pin, uint8_t b)
+{
+    for (int i = 0; i < 8; i++) { ow1_write_bit(pin, b & 1); b >>= 1; }
+}
+
+static int ow1_read_bit(int pin)
+{
+    int v;
+    portENTER_CRITICAL(&s_ow_mux);
+    gpio_set_level(pin, 0);
+    esp_rom_delay_us(3);
+    gpio_set_level(pin, 1);
+    esp_rom_delay_us(9);
+    v = gpio_get_level(pin);
+    esp_rom_delay_us(53);
+    portEXIT_CRITICAL(&s_ow_mux);
+    return v;
+}
+
+static uint8_t ow1_read_byte(int pin)
+{
+    uint8_t v = 0;
+    for (int i = 0; i < 8; i++) v |= (ow1_read_bit(pin) << i);
+    return v;
+}
+
+/* One full DS18B20 transaction over a single open-drain pin. */
+static bool ow1_read_centi_c(int pin, int16_t *out, const char **err)
+{
+    gpio_config_t od = {
+        .pin_bit_mask = (1ULL << pin),
+        .mode         = GPIO_MODE_INPUT_OUTPUT_OD,
+        .pull_up_en   = GPIO_PULLUP_ENABLE,
+    };
+    gpio_config(&od);
+    gpio_set_level(pin, 1);
+    esp_rom_delay_us(1000);
+
+    bool ok = false;
+    if (!ow1_reset(pin)) {
+        *err = "no presence pulse";
+    } else {
+        ow1_write_byte(pin, 0xCC);
+        ow1_write_byte(pin, 0x44);
+        vTaskDelay(pdMS_TO_TICKS(800));
+        if (!ow1_reset(pin)) {
+            *err = "no presence pulse after conversion";
+        } else {
+            ow1_write_byte(pin, 0xCC);
+            ow1_write_byte(pin, 0xBE);
+            uint8_t sc[9];
+            for (int i = 0; i < 9; i++) sc[i] = ow1_read_byte(pin);
+            if (ow_crc8(sc, 8) != sc[8]) {
+                *err = "scratchpad CRC mismatch";
+            } else {
+                *out = (int16_t)(((int32_t)(int16_t)((sc[1] << 8) | sc[0]) * 100) / 16);
+                ok = true;
+            }
+        }
+    }
+
+    /* Hand the pin back as a plain input for the split TX/RX code. */
+    gpio_reset_pin(pin);
+    gpio_config_t plain = { .pin_bit_mask = (1ULL << pin), .mode = GPIO_MODE_INPUT };
+    gpio_config(&plain);
+    return ok;
+}
