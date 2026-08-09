@@ -146,10 +146,11 @@ out:
     return ok;
 }
 
-/* Stream `size` bytes of a member ("app" or "fs") straight into `part` and
- * verify its SHA-256. The whole partition is written raw with per-sector
- * erase-then-write, interleaved with the socket recv, so the single-threaded
- * HTTP task never stops draining the connection for long.
+/* Stream `size` bytes of a member straight into `part` at `base` and verify its
+ * SHA-256. The partition is written raw with per-sector erase-then-write,
+ * interleaved with the socket recv, so the single-threaded HTTP task never stops
+ * draining the connection for long. `erase_tail` wipes the remainder of the
+ * partition after the member (wanted for app/fs, not when staging).
  *
  * The app is written raw too (not via esp_ota_begin/esp_ota_end) on purpose:
  * the stock app is booted by the stock Shelly OS loader (SH0S boot-select) or
@@ -160,54 +161,48 @@ out:
  * browser at the app->fs boundary until the connection dropped (~79%). The
  * SHA-256 check keeps the same integrity guarantee. */
 static esp_err_t write_member(httpd_req_t *req, size_t size,
-                              const esp_partition_t *part, const char *want_sha)
+                              const esp_partition_t *part, size_t base,
+                              const char *want_sha, bool erase_tail)
 {
     if (!part) return ESP_ERR_NOT_FOUND;
-    if (size > part->size) return ESP_ERR_INVALID_SIZE;
+    if (base > part->size || size > part->size - base) return ESP_ERR_INVALID_SIZE;
 
-    /* Heap-allocate the flash block + receive buffers: this runs on the HTTP
-     * server task whose stack is only a few KB, so a 4 KB block on the stack
-     * (plus the caller's manifest_t) overflows it and trips the stack guard. */
+    /* Heap-allocate the flash block: this runs on the HTTP server task whose
+     * stack is only a few KB, so a 4 KB block on the stack (plus the caller's
+     * manifest_t) overflows it and trips the stack guard. Receiving straight
+     * into this block keeps the restore down to one buffer -- heap is scarce
+     * with Matter, Thread, WiFi and BLE all up. */
     uint8_t *block = malloc(FS_WRITE_BLOCK);
-    char *buf = malloc(1024);
-    if (!block || !buf) { free(block); free(buf); return ESP_ERR_NO_MEM; }
+    if (!block) return ESP_ERR_NO_MEM;
 
     mbedtls_sha256_context sha;
     mbedtls_sha256_init(&sha);
     mbedtls_sha256_starts(&sha, 0);
 
     esp_err_t err = ESP_OK;
-    size_t blk = 0, off = 0, remaining = size;
+    size_t off = base, remaining = size;
     while (remaining > 0) {
-        size_t chunk = remaining < 1024 ? remaining : 1024;
-        if ((err = rx_exact(req, buf, chunk)) != ESP_OK) goto out;
-        mbedtls_sha256_update(&sha, (const uint8_t *)buf, chunk);
-        for (size_t i = 0; i < chunk; i++) {
-            block[blk++] = (uint8_t)buf[i];
-            if (blk == FS_WRITE_BLOCK) {
-                /* Erase + write one sector, interleaved with recv, so the HTTP
-                 * socket keeps draining and the TCP upload never stalls. */
-                if ((err = esp_partition_erase_range(part, off, FS_WRITE_BLOCK)) != ESP_OK) goto out;
-                if ((err = esp_partition_write(part, off, block, blk)) != ESP_OK) goto out;
-                off += blk; blk = 0;
-            }
-        }
-        remaining -= chunk;
-    }
-    if (blk > 0) {
+        size_t blk = remaining < FS_WRITE_BLOCK ? remaining : FS_WRITE_BLOCK;
+        if ((err = rx_exact(req, block, blk)) != ESP_OK) goto out;
+        mbedtls_sha256_update(&sha, block, blk);
+
         /* Pad the final block up to a 16-byte boundary (flash-encryption
          * requirement); the sector is erased first, so 0xFF padding is fine. */
         size_t padded = (blk + 15u) & ~15u;
-        memset(block + blk, 0xFF, padded - blk);
+        if (padded > blk) memset(block + blk, 0xFF, padded - blk);
+
+        /* Erase + write one sector, interleaved with recv, so the HTTP socket
+         * keeps draining and the TCP upload never stalls. */
         if ((err = esp_partition_erase_range(part, off, FS_WRITE_BLOCK)) != ESP_OK) goto out;
         if ((err = esp_partition_write(part, off, block, padded)) != ESP_OK) goto out;
         off += FS_WRITE_BLOCK;
+        remaining -= blk;
     }
 
     /* Erase any remaining tail now that the whole member has been received (no
      * socket left to stall), so the stock image sees a clean partition beyond
      * the written data. */
-    if (off < part->size &&
+    if (erase_tail && off < part->size &&
         (err = esp_partition_erase_range(part, off, part->size - off)) != ESP_OK)
         goto out;
 
@@ -221,7 +216,6 @@ static esp_err_t write_member(httpd_req_t *req, size_t size,
 out:
     mbedtls_sha256_free(&sha);
     free(block);
-    free(buf);
     return err;
 }
 
@@ -257,23 +251,55 @@ static esp_err_t capture_part(httpd_req_t *req, size_t size, const char *want_sh
     return ESP_OK;
 }
 
-/* Erase + write `len` bytes to raw flash offset `addr` and verify the read-back.
- * Used for the bootloader (0x0) and the partition table (0x10000), which live
- * outside any partition. The units are not flash-encrypted, so plaintext writes
- * reproduce the stock image exactly. */
-static esp_err_t write_raw_flash(uint32_t addr, const uint8_t *buf, size_t len)
+/* Erase + write `len` bytes to raw flash offset `addr` and verify the read-back,
+ * one sector at a time so no buffer the size of the image is ever needed. Used
+ * for the bootloader (0x0) and the partition table (0x10000), which live outside
+ * any partition. The units are not flash-encrypted, so plaintext writes
+ * reproduce the stock image exactly.
+ *
+ * `src` reads the image: either straight from a RAM buffer or from the staging
+ * partition, so the caller does not have to hold the bootloader in heap. */
+typedef esp_err_t (*src_read_fn)(void *ctx, size_t off, uint8_t *dst, size_t len);
+
+static esp_err_t write_raw_flash(uint32_t addr, src_read_fn read, void *ctx, size_t len)
 {
     size_t erase = (len + 4095u) & ~4095u;   /* round up to a flash sector */
     esp_err_t err = esp_flash_erase_region(NULL, addr, erase);
     if (err != ESP_OK) return err;
-    if ((err = esp_flash_write(NULL, buf, addr, len)) != ESP_OK) return err;
 
-    uint8_t *chk = malloc(len);
-    if (!chk) return ESP_ERR_NO_MEM;
-    err = esp_flash_read(NULL, chk, addr, len);
-    if (err == ESP_OK && memcmp(chk, buf, len) != 0) err = ESP_ERR_INVALID_CRC;
+    uint8_t *buf = malloc(FS_WRITE_BLOCK);
+    uint8_t *chk = malloc(FS_WRITE_BLOCK);
+    if (!buf || !chk) { free(buf); free(chk); return ESP_ERR_NO_MEM; }
+
+    for (size_t off = 0; off < len; ) {
+        size_t n = len - off < FS_WRITE_BLOCK ? len - off : FS_WRITE_BLOCK;
+        if ((err = read(ctx, off, buf, n)) != ESP_OK) break;
+        size_t padded = (n + 3u) & ~3u;   /* esp_flash_write wants 4-byte lengths */
+        if (padded > n) memset(buf + n, 0xFF, padded - n);
+        if ((err = esp_flash_write(NULL, buf, addr + off, padded)) != ESP_OK) break;
+        if ((err = esp_flash_read(NULL, chk, addr + off, n)) != ESP_OK) break;
+        if (memcmp(chk, buf, n) != 0) { err = ESP_ERR_INVALID_CRC; break; }
+        off += n;
+    }
+
+    free(buf);
     free(chk);
     return err;
+}
+
+typedef struct { const uint8_t *buf; } ram_src_t;
+typedef struct { const esp_partition_t *part; size_t base; } flash_src_t;
+
+static esp_err_t ram_src_read(void *ctx, size_t off, uint8_t *dst, size_t len)
+{
+    memcpy(dst, ((ram_src_t *)ctx)->buf + off, len);
+    return ESP_OK;
+}
+
+static esp_err_t flash_src_read(void *ctx, size_t off, uint8_t *dst, size_t len)
+{
+    const flash_src_t *s = (const flash_src_t *)ctx;
+    return esp_partition_read(s->part, s->base + off, dst, len);
 }
 
 static void fail(httpd_req_t *req, const char *msg)
@@ -292,18 +318,26 @@ esp_err_t stock_restore_handle_upload(httpd_req_t *req)
     const esp_partition_t *fs_part = esp_partition_find_first(
         ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, slot ? "fs_1" : "fs_0");
 
-    ESP_LOGW(TAG, "return-to-stock: writing stock app to %s (app_%d), fs=%s",
-             app_part->label, slot, fs_part ? fs_part->label : "(none)");
+    ESP_LOGW(TAG, "return-to-stock: writing stock app to %s (app_%d), fs=%s, %u B heap free",
+             app_part->label, slot, fs_part ? fs_part->label : "(none)",
+             (unsigned)esp_get_free_heap_size());
 
     manifest_t man;
     bool have_manifest = false;
     bool wrote_app = false;
 
-    /* Small stock members held in RAM until the app+fs are verified, so nothing
-     * outside the inactive app slot is touched until we are ready to commit. */
-    uint8_t *boot_buf = NULL, *pt_buf = NULL, *ota_buf = NULL;
-    size_t   boot_len = 0,     pt_len = 0,    ota_len = 0;
-    uint32_t boot_addr = 0,    pt_addr = 0;
+    /* The stock bootloader is staged in the (unused) zb_storage partition rather
+     * than in RAM: with Matter, Thread, WiFi and BLE up there is not reliably
+     * 21 KB of heap left, and a failed malloc aborted the restore right after the
+     * upload started. The partition table and boot state are small enough to keep
+     * in RAM. Nothing outside the inactive app slot and this staging area is
+     * touched until the app image has verified. */
+    const esp_partition_t *stage = esp_partition_find_first(
+        ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, "zb_storage");
+    bool staged_boot = false;
+    uint8_t *pt_buf = NULL, *ota_buf = NULL;
+    size_t   boot_len = 0,   pt_len = 0, ota_len = 0;
+    uint32_t boot_addr = 0,  pt_addr = 0;
 
 #define RESTORE_FAIL(msg) do { fail(req, (msg)); goto cleanup; } while (0)
 
@@ -349,13 +383,16 @@ esp_err_t stock_restore_handle_upload(httpd_req_t *req)
         const char *want_sha = part ? part->sha : "";
 
         if (part && strcmp(type, "app") == 0) {
-            if (write_member(req, comp_sz, app_part, want_sha) != ESP_OK) RESTORE_FAIL("app write/verify failed");
+            if (write_member(req, comp_sz, app_part, 0, want_sha, true) != ESP_OK) RESTORE_FAIL("app write/verify failed");
             wrote_app = true;
         } else if (part && strcmp(type, "fs") == 0) {
-            if (write_member(req, comp_sz, fs_part, want_sha) != ESP_OK) RESTORE_FAIL("fs write/verify failed");
+            if (write_member(req, comp_sz, fs_part, 0, want_sha, true) != ESP_OK) RESTORE_FAIL("fs write/verify failed");
         } else if (part && strcmp(type, "boot") == 0) {
-            if (comp_sz > 0x10000) RESTORE_FAIL("bootloader too large");
-            if (capture_part(req, comp_sz, want_sha, &boot_buf, &boot_len) != ESP_OK) RESTORE_FAIL("bootloader capture failed");
+            if (!stage) RESTORE_FAIL("no staging partition for the bootloader");
+            if (comp_sz > stage->size) RESTORE_FAIL("bootloader too large");
+            if (write_member(req, comp_sz, stage, 0, want_sha, false) != ESP_OK) RESTORE_FAIL("bootloader staging failed");
+            staged_boot = true;
+            boot_len = comp_sz;
             boot_addr = part->has_addr ? part->addr : 0x0u;
         } else if (part && strcmp(type, "pt") == 0) {
             if (comp_sz > 0x1000) RESTORE_FAIL("partition table too large");
@@ -389,7 +426,7 @@ esp_err_t stock_restore_handle_upload(httpd_req_t *req)
      * If the write at 0x0 is interrupted the device needs UART recovery from the
      * full backup; this is documented on the management page.
      */
-    if (ota_buf && boot_buf) {
+    if (ota_buf && staged_boot) {
         const esp_partition_t *ota = esp_partition_find_first(
             ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, NULL);
         if (!ota || ota_len > ota->size) RESTORE_FAIL("otadata partition mismatch");
@@ -405,10 +442,12 @@ esp_err_t stock_restore_handle_upload(httpd_req_t *req)
         if ((err = esp_partition_erase_range(ota, 0, ota->size)) != ESP_OK) RESTORE_FAIL("otadata erase failed");
         if ((err = esp_partition_write(ota, 0, ota_buf, ota_len)) != ESP_OK) RESTORE_FAIL("otadata write failed");
 
-        if (pt_buf && write_raw_flash(pt_addr, pt_buf, pt_len) != ESP_OK)
+        ram_src_t pt_src = { pt_buf };
+        if (pt_buf && write_raw_flash(pt_addr, ram_src_read, &pt_src, pt_len) != ESP_OK)
             RESTORE_FAIL("partition table write failed — restore your full UART backup instead");
 
-        if (write_raw_flash(boot_addr, boot_buf, boot_len) != ESP_OK)
+        flash_src_t boot_src = { stage, 0 };
+        if (write_raw_flash(boot_addr, flash_src_read, &boot_src, boot_len) != ESP_OK)
             RESTORE_FAIL("bootloader write failed — restore your full UART backup instead");
 
         ESP_LOGW(TAG, "return-to-stock: restored stock bootloader + pt + boot state");
@@ -435,7 +474,11 @@ esp_err_t stock_restore_handle_upload(httpd_req_t *req)
         }
     }
 
-    free(boot_buf); free(pt_buf); free(ota_buf);
+    /* The staging copy has served its purpose; leave zb_storage erased so stock
+     * initialises it from scratch, like the NVS wipe above. */
+    if (staged_boot) esp_partition_erase_range(stage, 0, stage->size);
+
+    free(pt_buf); free(ota_buf);
     ESP_LOGW(TAG, "return-to-stock complete, rebooting into stock app_%d", slot);
     httpd_resp_sendstr(req, "OK");
     vTaskDelay(pdMS_TO_TICKS(800));
@@ -443,7 +486,7 @@ esp_err_t stock_restore_handle_upload(httpd_req_t *req)
     return ESP_OK;
 
 cleanup:
-    free(boot_buf); free(pt_buf); free(ota_buf);
+    free(pt_buf); free(ota_buf);
     return ESP_FAIL;
 #undef RESTORE_FAIL
 }

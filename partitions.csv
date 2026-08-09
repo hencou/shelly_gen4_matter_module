@@ -4,8 +4,9 @@
 # stock Shelly OS loader boots our slots and flashing to/from stock Shelly
 # firmware keeps working.
 # Matter data (chip-factory, chip-kvs) is stored in the nvs partition.
-# The fs_0/fs_1/zb_storage/shelly partitions are stock placeholders not used
-# by this firmware.
+# The fs_0/fs_1/shelly partitions are stock placeholders not used by this
+# firmware; zb_storage is only used as a scratch area to stage the stock
+# bootloader during return-to-stock (erased again afterwards).
 # Name,        Type, SubType,  Offset,    Size,     Flags
 otadata,       data, ota,      0x11000,   0x2000,
 nvs,           data, nvs,      0x14000,   0xC000,
