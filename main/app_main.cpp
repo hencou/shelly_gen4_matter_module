@@ -28,6 +28,7 @@ extern "C" {
 #include "loader_migrate.h"
 #include "status_led.h"
 #include "script_engine.h"
+#include "log_buffer.h"
 #include "web_api.h"
 }
 
@@ -136,6 +137,10 @@ extern "C" void on_power_ade(const power_meter_reading_t *a, const power_meter_r
 
 extern "C" void app_main(void)
 {
+    /* Mirror ESP_LOG into RAM before anything else logs, so the management page
+     * can show the boot sequence when the Add-on occupies UART0. */
+    log_buffer_init();
+
     /* Mark current image as valid immediately so the bootloader does not
      * roll back while the rest of init runs (Matter/sensors can take seconds).
      * Done before the (possibly slow) nvs/Matter init and without an extra

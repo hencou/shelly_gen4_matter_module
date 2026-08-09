@@ -42,6 +42,7 @@ static const char MGMT_HTML[] =
 "<div class=tab onclick=showTab(1)>Hardware</div>"
 "<div class=tab onclick=showTab(2)>Scripts</div>"
 "<div class=tab onclick=showTab(3)>Backup</div>"
+"<div class=tab onclick=showTab(4)>Log</div>"
 "</div>"
 
 /* ── Tab 0: WiFi & OTA ── */
@@ -227,6 +228,17 @@ static const char MGMT_HTML[] =
 "<div id=stock-msg class=msg></div>"
 "</div>"
 
+/* ── Tab 4: Log ── */
+"<div class=pane id=p4>"
+"<h3>Device Log</h3>"
+"<p class=info>Last 8 kB of ESP_LOG output, kept in RAM. Useful when the Add-on "
+"occupies GPIO16/17 and no serial console is available.</p>"
+"<p><label><input type=checkbox id=log-auto checked> Auto-refresh (5 s)</label> "
+"<button class='btn btn-blue' onclick=loadLog()>Refresh now</button></p>"
+"<pre id=log-txt style='max-height:60vh;overflow:auto;font-size:.8em;"
+"  white-space:pre-wrap;border:1px solid #ccc;border-radius:3px;padding:.5em'></pre>"
+"</div>"
+
 "<script>"
 /* Tab switching */
 "function showTab(n){"
@@ -234,7 +246,29 @@ static const char MGMT_HTML[] =
 "  document.querySelectorAll('.pane').forEach(function(p,i){p.className=i==n?'pane act':'pane'});"
 "  if(n==1){loadHWConfig();loadHW();startHWTimer()}else{stopHWTimer()}"
 "  if(n==2){loadSlot()}"
+"  if(n==4){loadLog();startLogTimer()}else{stopLogTimer()}"
 "}"
+
+/* Device log readout + auto-refresh */
+"var logTimer=null;"
+"function loadLog(){"
+"  var x=new XMLHttpRequest();"
+"  x.onload=function(){"
+"    if(x.status==200){"
+"      var e=document.getElementById('log-txt');"
+"      var atEnd=e.scrollTop+e.clientHeight>=e.scrollHeight-20;"
+"      e.textContent=x.responseText;"
+"      if(atEnd)e.scrollTop=e.scrollHeight;"
+"    }"
+"  };"
+"  x.open('GET','/api/log');x.send();"
+"}"
+"function startLogTimer(){"
+"  if(!logTimer)logTimer=setInterval(function(){"
+"    if(document.getElementById('log-auto').checked)loadLog();"
+"  },5000);"
+"}"
+"function stopLogTimer(){if(logTimer){clearInterval(logTimer);logTimer=null}}"
 
 /* Load saved settings + firmware version on page load */
 "function loadSettings(){"

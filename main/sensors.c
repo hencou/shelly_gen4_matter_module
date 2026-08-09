@@ -55,6 +55,13 @@ int sensors_occupancy_duty(void)
     return s_last_duty;
 }
 
+static const char *s_temp_err;
+
+const char *sensors_temp_error(void)
+{
+    return s_temp_err ? s_temp_err : "no reading yet";
+}
+
 /* ========================== Dual-pin 1-Wire / DS18B20 ========================== */
 /* The Shelly Plus Add-on uses an ISO7221A dual digital isolator.
  * TX pin (GPIO9)  = output: ESP32 sends commands to the DS18B20
@@ -153,9 +160,6 @@ static uint8_t ow_crc8(const uint8_t *data, int len)
     }
     return crc;
 }
-
-/* Reason of the last failed attempt, for the log. */
-static const char *s_temp_err = "no reading yet";
 
 static bool ds18b20_read_centi_c(int16_t *out)
 {
