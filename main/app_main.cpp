@@ -38,8 +38,58 @@ extern "C" {
 #include <lib/core/DataModelTypes.h>
 #include <lib/support/Span.h>
 #include <platform/ConnectivityManager.h>
+#include <platform/PlatformManager.h>
+#include <esp_timer.h>
 
 static const char *TAG = "app";
+
+/* Services that only make sense once the node is part of a fabric and has a
+ * Thread interface: the management dashboard over Thread/IPv6, the address
+ * logger + _http._tcp advertisement, the connectivity watchdog and the SRP
+ * fallback server. Idempotent, so it can run at boot AND on the
+ * commissioning-complete event without a reboot in between. */
+static void start_commissioned_services(void)
+{
+    static bool started = false;
+    if (started) return;
+    started = true;
+
+    if (ota_srp_mode_get()) {
+        matter_srp_server_start();
+        ESP_LOGI(TAG, "SRP fallback controller started");
+    }
+
+    matter_thread_watchdog_start();
+
+    /* Management page over IPv6/Thread (no WiFi needed). Reachable once a
+     * border router hands out an OMR address. */
+    web_api_start_httpd();
+    matter_thread_addr_log_start();
+    ESP_LOGI(TAG, "management httpd started over Thread (IPv6)");
+}
+
+/* Freshly commissioned: bring the Thread-side services up now instead of at the
+ * next boot. Deferred off the CHIP task by a one-shot timer, both to keep the
+ * event handler short and to give Thread a moment to attach and pick up its
+ * addresses. */
+static esp_timer_handle_t s_commissioned_timer = NULL;
+
+static void on_commissioning_complete(const chip::DeviceLayer::ChipDeviceEvent *event,
+                                      intptr_t /*arg*/)
+{
+    if (event->Type != chip::DeviceLayer::DeviceEventType::kCommissioningComplete) return;
+    if (s_commissioned_timer) return;
+
+    const esp_timer_create_args_t args = {
+        .callback = [](void *) { start_commissioned_services(); },
+        .arg = nullptr,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "commissioned",
+        .skip_unhandled_events = true,
+    };
+    if (esp_timer_create(&args, &s_commissioned_timer) == ESP_OK)
+        esp_timer_start_once(s_commissioned_timer, 3 * 1000 * 1000);  /* 3 s */
+}
 
 extern "C" void on_button_event(input_id_t id, button_event_t evt)
 {
@@ -138,27 +188,15 @@ extern "C" void app_main(void)
 
     bool commissioned = chip::Server::GetInstance().GetFabricTable().FabricCount() > 0;
 
-    /* SRP fallback server: provides DNS-SD service discovery on the Thread mesh
-     * only when no real border router is present, so local device-to-device
-     * bindings survive a TBR/HA outage. It yields to any border router the
-     * moment one appears (a BR has the LAN advertising proxy our node lacks). */
-    if (ota_srp_mode_get() && commissioned) {
-        matter_srp_server_start();
-        ESP_LOGI(TAG, "BOOT-STEP: SRP fallback controller started");
-    }
-
-    /* Thread connectivity watchdog: auto-recover a node that gets stuck
-     * detached (unreachable over Thread) instead of requiring a manual reboot. */
     if (commissioned) {
-        matter_thread_watchdog_start();
-        ESP_LOGI(TAG, "BOOT-STEP: Thread connectivity watchdog started");
-
-        /* Spike: expose the management page over IPv6/Thread (no WiFi needed)
-         * and log the Thread IPv6 addresses so it can be reached from a browser.
-         * Only meaningful with a border router present (OMR address). */
-        web_api_start_httpd();
-        matter_thread_addr_log_start();
-        ESP_LOGI(TAG, "BOOT-STEP: management httpd started over Thread (IPv6)");
+        start_commissioned_services();
+        ESP_LOGI(TAG, "BOOT-STEP: commissioned services started");
+    } else {
+        /* Not in a fabric yet. Start the same services the moment commissioning
+         * completes, so the dashboard is reachable over Thread without the user
+         * having to reboot the device first. */
+        chip::DeviceLayer::PlatformMgr().AddEventHandler(on_commissioning_complete, 0);
+        ESP_LOGI(TAG, "BOOT-STEP: awaiting commissioning to start Thread services");
     }
 
     // =========================================================================
