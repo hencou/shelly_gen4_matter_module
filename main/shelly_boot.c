@@ -73,10 +73,30 @@ static bool    s_have_template = false;
 #define BS_OFF_MAGIC   0x08u
 #define BS_OFF_SEQ2    0x0Cu
 #define BS_OFF_CRC_HDR 0x1Cu  /* crc32 over [0:0x1c] chained with 4 zero bytes  */
-#define BS_OFF_FLAGS0  0x1D0u /* bit0=as, bit1=rs, bits4-7=ba                   */
+#define BS_OFF_FLAGS0  0x1D0u /* bit0=rs, bit1=as, bits4-7=ba                   */
 #define BS_OFF_FLAGS1  0x1D1u /* low nibble=c (committed), high nibble=mfs      */
 #define BS_OFF_CRC_BODY 0x1FCu /* crc32 over [0:0x1fc]                          */
 #define BS_MAGIC       0x53304853u /* "SH0S" little-endian */
+
+/* flags0 bit assignment, as printed by the stock loader itself:
+ *   shos_ota: Read BS0: seq ... as 0 rs 1 ba 0 mfs 0 c 1 | v 1
+ * `rs` (reserve slot) is bit0 and `as` (active slot) is bit1 -- not the other
+ * way round. The factory boot state ships flags0=0x01, i.e. as=0/rs=1, which
+ * matches its manifest putting the app in app_0. */
+#define BS_F0_RS       0x01u
+#define BS_F0_AS       0x02u
+#define BS_F0_BA       0xF0u
+
+/* Select `slot` as the active slot and the other one as reserve, and clear the
+ * boot-attempt counter. */
+static void bs_set_slot(uint8_t *s, int slot)
+{
+    uint8_t f0 = s[BS_OFF_FLAGS0];
+    f0 = (uint8_t)(f0 & ~(BS_F0_AS | BS_F0_RS | BS_F0_BA));
+    if (slot) f0 |= BS_F0_AS;
+    else      f0 |= BS_F0_RS;
+    s[BS_OFF_FLAGS0] = f0;
+}
 
 static uint32_t rd32(const uint8_t *b, size_t off)
 {
@@ -172,16 +192,11 @@ esp_err_t shelly_boot_switch_slot(int slot)
     /* Build the new entry from the template so all body bytes stay valid. */
     memcpy(nb, tmpl, BS_SECTOR_SIZE);
 
-    uint32_t old_as  = (uint32_t)(nb[BS_OFF_FLAGS0] & 0x01u);
     uint32_t new_seq = rd32(nb, BS_OFF_SEQ) + 1u;
     wr32(nb, BS_OFF_SEQ,  new_seq);
     wr32(nb, BS_OFF_SEQ2, new_seq);
 
-    uint8_t f0 = nb[BS_OFF_FLAGS0];
-    f0 = (uint8_t)((f0 & ~0x01u) | (uint32_t)slot);        /* as = target slot          */
-    f0 = (uint8_t)((f0 & ~0x02u) | (old_as << 1));         /* rs = previous active slot  */
-    f0 = (uint8_t)(f0 & ~0xF0u);                           /* ba = 0 (boot attempts)     */
-    nb[BS_OFF_FLAGS0] = f0;
+    bs_set_slot(nb, slot);
 
     /* flags1: low nibble = committed, high nibble = mfs. The stock loader
      * rolls back to the reserve slot when the booted entry is NOT committed,
@@ -203,8 +218,8 @@ esp_err_t shelly_boot_switch_slot(int slot)
         goto out;
     }
 
-    ESP_LOGI(TAG, "SH0S boot-select -> app_%d (seq %" PRIu32 ", sector 0x%x)",
-             slot, new_seq, (unsigned)tgt);
+    ESP_LOGI(TAG, "SH0S boot-select -> app_%d (flags0 0x%02x, seq %" PRIu32 ", sector 0x%x)",
+             slot, nb[BS_OFF_FLAGS0], new_seq, (unsigned)tgt);
 
 out:
     free(s0);
@@ -222,11 +237,7 @@ esp_err_t shelly_boot_patch_state(uint8_t *state, size_t len, int slot)
         uint8_t *s = state + off;
         if (rd32(s, BS_OFF_MAGIC) != BS_MAGIC) continue;
 
-        uint8_t f0 = s[BS_OFF_FLAGS0];
-        f0 = (uint8_t)((f0 & ~0x01u) | (uint32_t)slot);              /* as = target slot   */
-        f0 = (uint8_t)((f0 & ~0x02u) | ((uint32_t)(slot ? 0 : 1) << 1)); /* rs = other slot */
-        f0 = (uint8_t)(f0 & ~0xF0u);                                 /* ba = 0             */
-        s[BS_OFF_FLAGS0] = f0;
+        bs_set_slot(s, slot);
         s[BS_OFF_FLAGS1] = 0x01u;   /* committed = 1, mfs = 0: no rollback on first boot */
 
         wr32(s, BS_OFF_CRC_HDR,  bs_crc_hdr(s));
@@ -239,7 +250,8 @@ esp_err_t shelly_boot_patch_state(uint8_t *state, size_t len, int slot)
         ESP_LOGE(TAG, "stock boot state carries no SH0S entry");
         return ESP_ERR_NOT_FOUND;
     }
-    ESP_LOGI(TAG, "stock boot state patched -> app_%d (%d SH0S entries)", slot, patched);
+    ESP_LOGI(TAG, "stock boot state patched -> app_%d (flags0 0x%02x, %d SH0S entries)",
+             slot, state[BS_OFF_FLAGS0], patched);
     return ESP_OK;
 }
 
