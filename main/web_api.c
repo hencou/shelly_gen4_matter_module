@@ -1075,6 +1075,17 @@ static esp_err_t api_log_get(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t api_owprobe_get(httpd_req_t *req)
+{
+    /* Static so the report does not come off the httpd task stack. */
+    static char out[768];
+    sensors_ow_probe(out, sizeof(out));
+
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_sendstr(req, out);
+    return ESP_OK;
+}
+
 /* ---------- HTTP server ---------- */
 
 static httpd_handle_t s_srv = NULL;
@@ -1116,6 +1127,7 @@ void web_api_start_httpd(void)
     httpd_uri_t post_restore_stock= { "/api/restore-stock", HTTP_POST,   stock_restore_handle_upload, NULL };
     httpd_uri_t get_stock_fw      = { "/api/stock-fw",      HTTP_GET,    stock_fw_info_get,     NULL };
     httpd_uri_t get_log           = { "/api/log",           HTTP_GET,    api_log_get,           NULL };
+    httpd_uri_t get_owprobe       = { "/api/owprobe",       HTTP_GET,    api_owprobe_get,       NULL };
 
     httpd_register_uri_handler(srv, &get_root);
     httpd_register_uri_handler(srv, &post_upload);
@@ -1139,6 +1151,7 @@ void web_api_start_httpd(void)
     httpd_register_uri_handler(srv, &post_restore_stock);
     httpd_register_uri_handler(srv, &get_stock_fw);
     httpd_register_uri_handler(srv, &get_log);
+    httpd_register_uri_handler(srv, &get_owprobe);
 
     s_srv = srv;
 }

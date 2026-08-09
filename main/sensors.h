@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -24,6 +25,11 @@ int sensors_occupancy_duty(void);
 
 /* Why the last DS18B20 attempt failed, for the management page and the log. */
 const char *sensors_temp_error(void);
+
+/* Run the 1-Wire diagnostics (pin ownership, loopback, presence scan, one read)
+ * and write a human-readable report into out. Takes the Add-on bus lock and
+ * blocks for roughly a second. Returns the number of bytes written. */
+size_t sensors_ow_probe(char *out, size_t out_size);
 
 #ifdef __cplusplus
 }

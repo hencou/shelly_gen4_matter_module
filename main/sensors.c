@@ -16,6 +16,8 @@
 #include "app_config.h"
 #include "hw_config.h"
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "esp_log.h"
 #include "esp_rom_sys.h"
@@ -132,7 +134,7 @@ static int ow_read_bit(void)
 /* Wiring check: the RX line must mirror what TX drives, because both sides of
  * the isolator sit on the same open-drain 1-Wire bus. RX staying high while TX
  * is low means our reset pulse never reaches the bus at all. */
-static void ow_loopback_probe(void)
+static void ow_loopback_probe(int *lo_out, int *hi_out)
 {
     ow_tx_low();
     esp_rom_delay_us(200);
@@ -142,6 +144,8 @@ static void ow_loopback_probe(void)
     int hi = ow_rx_read();
     ESP_LOGI(TAG, "1-Wire loopback: TX=0 -> RX=%d (expect 0), TX=1 -> RX=%d (expect 1)",
              lo, hi);
+    if (lo_out) *lo_out = lo;
+    if (hi_out) *hi_out = hi;
 }
 
 #define OW_SCAN_SAMPLES   60
@@ -150,7 +154,7 @@ static void ow_loopback_probe(void)
 /* Sample the bus for 300 us after a reset pulse instead of at the single 70 us
  * point, so a presence pulse that falls outside the standard window is still
  * visible. */
-static void ow_presence_scan(void)
+static void ow_presence_scan(int *first_us, int *last_us)
 {
     int s[OW_SCAN_SAMPLES];
 
@@ -179,6 +183,61 @@ static void ow_presence_scan(void)
         ESP_LOGW(TAG, "presence scan: RX low from %d us to %d us after the reset pulse",
                  first * OW_SCAN_STEP_US, (last + 1) * OW_SCAN_STEP_US);
     }
+    if (first_us) *first_us = (first < 0) ? -1 : first * OW_SCAN_STEP_US;
+    if (last_us)  *last_us  = (last  < 0) ? -1 : (last + 1) * OW_SCAN_STEP_US;
+}
+
+/* Who owns the pins: an internal pull-down that still reads high means
+ * something drives RX actively (a peripheral that was not released), while
+ * following the internal pulls means the line is floating and the Add-on bus
+ * never reaches the pin. Reading TX back while driving it low shows whether
+ * our own output actually takes effect. */
+static void ow_pin_ownership_probe(int *rx_pd, int *rx_pu, int *tx_readback)
+{
+    gpio_config_t pd = {
+        .pin_bit_mask = (1ULL << OW_RX),
+        .mode         = GPIO_MODE_INPUT,
+        .pull_down_en = GPIO_PULLDOWN_ENABLE,
+    };
+    gpio_config(&pd);
+    esp_rom_delay_us(200);
+    int lvl_pd = ow_rx_read();
+
+    gpio_config_t pu = {
+        .pin_bit_mask = (1ULL << OW_RX),
+        .mode         = GPIO_MODE_INPUT,
+        .pull_up_en   = GPIO_PULLUP_ENABLE,
+    };
+    gpio_config(&pu);
+    esp_rom_delay_us(200);
+    int lvl_pu = ow_rx_read();
+
+    /* Restore the plain input the 1-Wire code expects. */
+    gpio_config_t plain = {
+        .pin_bit_mask = (1ULL << OW_RX),
+        .mode         = GPIO_MODE_INPUT,
+    };
+    gpio_config(&plain);
+
+    /* Output with the input buffer on, so gpio_get_level() reports the actual
+     * pad level rather than the register we wrote. */
+    gpio_config_t tx_io = {
+        .pin_bit_mask = (1ULL << OW_TX),
+        .mode         = GPIO_MODE_INPUT_OUTPUT,
+    };
+    gpio_config(&tx_io);
+    ow_tx_low();
+    esp_rom_delay_us(200);
+    int tx_lvl = gpio_get_level(OW_TX);
+    ow_tx_high();
+
+    ESP_LOGI(TAG, "pin ownership: RX pull-down reads %d (0 = floating, 1 = driven high), "
+                  "RX pull-up reads %d, TX reads %d while driven low (1 = pin held by something else)",
+             lvl_pd, lvl_pu, tx_lvl);
+
+    if (rx_pd)       *rx_pd = lvl_pd;
+    if (rx_pu)       *rx_pu = lvl_pu;
+    if (tx_readback) *tx_readback = tx_lvl;
 }
 
 static void ow_write_byte(uint8_t b)
@@ -286,7 +345,7 @@ static void temp_task(void *arg)
 
     ESP_LOGI(TAG, "1-Wire TX=GPIO%d RX=GPIO%d, RX idle level %d (expect 1)",
              OW_TX, OW_RX, ow_rx_read());
-    ow_loopback_probe();
+    ow_loopback_probe(NULL, NULL);
 
     while (1) {
         int16_t centi = 0;
@@ -299,8 +358,8 @@ static void temp_task(void *arg)
             s_temp_valid = false;
             ESP_LOGW(TAG, "DS18B20 read failed: %s (RX level %d)", s_temp_err, ow_rx_read());
             xSemaphoreTake(s_addon_bus, portMAX_DELAY);
-            ow_loopback_probe();
-            ow_presence_scan();
+            ow_loopback_probe(NULL, NULL);
+            ow_presence_scan(NULL, NULL);
             xSemaphoreGive(s_addon_bus);
         }
         vTaskDelay(pdMS_TO_TICKS(TEMP_REPORT_INT_S * 1000));
@@ -412,4 +471,69 @@ void sensors_init(temp_cb_t temp_cb, occupancy_cb_t occ_cb, analog_cb_t analog_c
         xTaskCreate(temp_task, "temp_task", 3072, NULL, 5, NULL);
         xTaskCreate(occ_task,  "occ_task",  2560, NULL, 5, NULL);
     }
+}
+
+/* ========================== On-demand 1-Wire diagnostics ================= */
+
+size_t sensors_ow_probe(char *out, size_t out_size)
+{
+    if (!out || out_size == 0) return 0;
+    out[0] = '\0';
+
+    if (!hw_profile()->has_addon) {
+        return snprintf(out, out_size, "no Add-on on this hardware profile\n");
+    }
+    if (g_bench_mode) {
+        return snprintf(out, out_size,
+                        "bench mode is ON: sensor tasks are not running and "
+                        "GPIO%d/%d are left to UART0\n", OW_TX, OW_RX);
+    }
+    if (!s_addon_bus) {
+        return snprintf(out, out_size, "Add-on bus mutex missing — sensor tasks never started\n");
+    }
+
+    int rx_pd = -1, rx_pu = -1, tx_rb = -1, lo = -1, hi = -1, first = -1, last = -1;
+    int16_t centi = 0;
+    bool read_ok;
+
+    xSemaphoreTake(s_addon_bus, portMAX_DELAY);
+    int idle = ow_rx_read();
+    ow_pin_ownership_probe(&rx_pd, &rx_pu, &tx_rb);
+    ow_loopback_probe(&lo, &hi);
+    ow_presence_scan(&first, &last);
+    read_ok = ds18b20_read_centi_c(&centi);
+    xSemaphoreGive(s_addon_bus);
+
+    size_t n = 0;
+    n += snprintf(out + n, out_size - n, "TX=GPIO%d RX=GPIO%d, RX idle level %d (expect 1)\n",
+                  OW_TX, OW_RX, idle);
+    n += snprintf(out + n, out_size - n,
+                  "pin ownership: RX with pull-down reads %d, with pull-up reads %d, "
+                  "TX reads %d while driven low\n", rx_pd, rx_pu, tx_rb);
+    n += snprintf(out + n, out_size - n,
+                  "  %s\n",
+                  rx_pd == 1 ? "RX is driven high by something else — not the Add-on bus"
+                             : (rx_pu == 1 ? "RX follows the internal pulls — line floating, bus not reaching the pin"
+                                           : "RX is held low"));
+    n += snprintf(out + n, out_size - n,
+                  "  %s\n",
+                  tx_rb == 1 ? "TX does not go low when driven — pin held by something else"
+                             : "TX goes low when driven");
+    n += snprintf(out + n, out_size - n,
+                  "loopback: TX=0 -> RX=%d (expect 0), TX=1 -> RX=%d (expect 1)\n", lo, hi);
+    if (first < 0) {
+        n += snprintf(out + n, out_size - n,
+                      "presence scan: RX stayed high for %d us after the reset pulse\n",
+                      OW_SCAN_SAMPLES * OW_SCAN_STEP_US);
+    } else {
+        n += snprintf(out + n, out_size - n,
+                      "presence scan: RX low from %d us to %d us after the reset pulse\n",
+                      first, last);
+    }
+    if (read_ok) {
+        n += snprintf(out + n, out_size - n, "read: %d.%02d C\n", centi / 100, abs(centi % 100));
+    } else {
+        n += snprintf(out + n, out_size - n, "read failed: %s\n", sensors_temp_error());
+    }
+    return n;
 }
