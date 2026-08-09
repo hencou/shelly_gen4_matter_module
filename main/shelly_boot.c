@@ -213,6 +213,36 @@ out:
     return err;
 }
 
+esp_err_t shelly_boot_patch_state(uint8_t *state, size_t len, int slot)
+{
+    if (!state || (slot != 0 && slot != 1)) return ESP_ERR_INVALID_ARG;
+
+    int patched = 0;
+    for (size_t off = 0; off + BS_SECTOR_SIZE <= len; off += BS_SECTOR_SIZE) {
+        uint8_t *s = state + off;
+        if (rd32(s, BS_OFF_MAGIC) != BS_MAGIC) continue;
+
+        uint8_t f0 = s[BS_OFF_FLAGS0];
+        f0 = (uint8_t)((f0 & ~0x01u) | (uint32_t)slot);              /* as = target slot   */
+        f0 = (uint8_t)((f0 & ~0x02u) | ((uint32_t)(slot ? 0 : 1) << 1)); /* rs = other slot */
+        f0 = (uint8_t)(f0 & ~0xF0u);                                 /* ba = 0             */
+        s[BS_OFF_FLAGS0] = f0;
+        s[BS_OFF_FLAGS1] = 0x01u;   /* committed = 1, mfs = 0: no rollback on first boot */
+
+        wr32(s, BS_OFF_CRC_HDR,  bs_crc_hdr(s));
+        wr32(s, BS_OFF_CRC_BODY, bs_crc_body(s));
+        if (!bs_valid(s)) return ESP_ERR_INVALID_CRC;
+        patched++;
+    }
+
+    if (patched == 0) {
+        ESP_LOGE(TAG, "stock boot state carries no SH0S entry");
+        return ESP_ERR_NOT_FOUND;
+    }
+    ESP_LOGI(TAG, "stock boot state patched -> app_%d (%d SH0S entries)", slot, patched);
+    return ESP_OK;
+}
+
 void shelly_boot_snapshot(void)
 {
     const esp_partition_t *ota = esp_partition_find_first(

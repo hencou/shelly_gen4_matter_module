@@ -232,8 +232,15 @@ static esp_err_t capture_part(httpd_req_t *req, size_t size, const char *want_sh
                               uint8_t **out, size_t *out_len)
 {
     uint8_t *b = malloc(size);
-    if (!b) return ESP_ERR_NO_MEM;
-    if (rx_exact(req, b, size) != ESP_OK) { free(b); return ESP_FAIL; }
+    if (!b) {
+        ESP_LOGE(TAG, "out of heap for %u byte part", (unsigned)size);
+        return ESP_ERR_NO_MEM;
+    }
+    if (rx_exact(req, b, size) != ESP_OK) {
+        ESP_LOGE(TAG, "upload aborted while reading %u byte part", (unsigned)size);
+        free(b);
+        return ESP_FAIL;
+    }
 
     if (want_sha[0]) {
         uint8_t digest[32]; char hex[65];
@@ -375,10 +382,10 @@ esp_err_t stock_restore_handle_upload(httpd_req_t *req)
      * expects its own bootloader and an SH0S boot state.
      *
      * Write order is chosen so the irreversible bootloader write at 0x0 is last:
-     *   1. otadata  <- stock boot_state.bin (seeds a valid SH0S template)
+     *   1. otadata  <- stock boot_state.bin, patched to select the slot the
+     *                  stock app was actually written to
      *   2. pt       <- stock partition-table.bin @ 0x10000
-     *   3. SH0S boot-select -> the slot the stock app was actually written to
-     *   4. bootloader <- stock bootloader.bin @ 0x0  (Shelly OS loader)
+     *   3. bootloader <- stock bootloader.bin @ 0x0  (Shelly OS loader)
      * If the write at 0x0 is interrupted the device needs UART recovery from the
      * full backup; this is documented on the management page.
      */
@@ -387,16 +394,19 @@ esp_err_t stock_restore_handle_upload(httpd_req_t *req)
             ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, NULL);
         if (!ota || ota_len > ota->size) RESTORE_FAIL("otadata partition mismatch");
 
+        /* The stock boot state hard-codes app_1, but the stock app went to
+         * whichever slot was inactive. Patch the SH0S entries in RAM so a single
+         * write lands the correct boot state: re-reading it back from flash and
+         * flipping the slot afterwards cannot work here, because the stock
+         * loader (which owns that format) is only written in step 3. */
+        if ((err = shelly_boot_patch_state(ota_buf, ota_len, slot)) != ESP_OK)
+            RESTORE_FAIL("stock boot state has no usable SH0S entry");
+
         if ((err = esp_partition_erase_range(ota, 0, ota->size)) != ESP_OK) RESTORE_FAIL("otadata erase failed");
         if ((err = esp_partition_write(ota, 0, ota_buf, ota_len)) != ESP_OK) RESTORE_FAIL("otadata write failed");
 
         if (pt_buf && write_raw_flash(pt_addr, pt_buf, pt_len) != ESP_OK)
             RESTORE_FAIL("partition table write failed — restore your full UART backup instead");
-
-        /* Re-point the freshly seeded SH0S boot state at the slot the stock app
-         * was actually written to (the inactive slot may be app_1). */
-        if ((err = shelly_boot_switch_slot(slot)) != ESP_OK)
-            RESTORE_FAIL("SH0S boot-select failed — restore your full UART backup instead");
 
         if (write_raw_flash(boot_addr, boot_buf, boot_len) != ESP_OK)
             RESTORE_FAIL("bootloader write failed — restore your full UART backup instead");
