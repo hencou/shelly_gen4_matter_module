@@ -15,6 +15,7 @@
 #include "relay.h"
 #include "chip_temp.h"
 #include "sensors.h"
+#include "log_buffer.h"
 #include "script_engine.h"
 #include "dashboard_html.h"
 #include "matter_device.h"
@@ -158,7 +159,7 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
     int dig_level = hw->has_addon ? gpio_get_level(PIN_TOUCH_INPUT) : 0;
 
     char ana_str[32];
-    char temp_str[32];
+    char temp_str[64];
     if (!hw->has_addon) {
         snprintf(ana_str, sizeof(ana_str), "N/A (no Add-on)");
         snprintf(temp_str, sizeof(temp_str), "N/A (no Add-on)");
@@ -182,7 +183,7 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
             int frac = centi < 0 ? -(centi % 100) : (centi % 100);
             snprintf(temp_str, sizeof(temp_str), "%d.%02d C", deg, frac);
         } else {
-            snprintf(temp_str, sizeof(temp_str), "sensor not found");
+            snprintf(temp_str, sizeof(temp_str), "not read: %s", sensors_temp_error());
         }
     }
 
@@ -1063,6 +1064,17 @@ static esp_err_t api_diag_get(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t api_log_get(httpd_req_t *req)
+{
+    /* Static so the 8 kB copy does not come off the httpd task stack. */
+    static char out[8193];
+    log_buffer_read(out, sizeof(out));
+
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_sendstr(req, out);
+    return ESP_OK;
+}
+
 /* ---------- HTTP server ---------- */
 
 static httpd_handle_t s_srv = NULL;
@@ -1079,7 +1091,7 @@ void web_api_start_httpd(void)
     hc.recv_wait_timeout  = 30;
     hc.send_wait_timeout  = 10;
     hc.max_open_sockets   = 3;
-    hc.max_uri_handlers   = 23;
+    hc.max_uri_handlers   = 24;
     ESP_ERROR_CHECK(httpd_start(&srv, &hc));
 
     httpd_uri_t get_root          = { "/",                  HTTP_GET,    form_get,              NULL };
@@ -1103,6 +1115,7 @@ void web_api_start_httpd(void)
     httpd_uri_t get_diag          = { "/api/diag",          HTTP_GET,    api_diag_get,          NULL };
     httpd_uri_t post_restore_stock= { "/api/restore-stock", HTTP_POST,   stock_restore_handle_upload, NULL };
     httpd_uri_t get_stock_fw      = { "/api/stock-fw",      HTTP_GET,    stock_fw_info_get,     NULL };
+    httpd_uri_t get_log           = { "/api/log",           HTTP_GET,    api_log_get,           NULL };
 
     httpd_register_uri_handler(srv, &get_root);
     httpd_register_uri_handler(srv, &post_upload);
@@ -1125,6 +1138,7 @@ void web_api_start_httpd(void)
     httpd_register_uri_handler(srv, &get_diag);
     httpd_register_uri_handler(srv, &post_restore_stock);
     httpd_register_uri_handler(srv, &get_stock_fw);
+    httpd_register_uri_handler(srv, &get_log);
 
     s_srv = srv;
 }

@@ -15,6 +15,7 @@ idf_component_register(
         "stock_restore.c"
         "stock_fw.c"
         "web_api.c"
+        "log_buffer.c"
         "status_led.c"
         "script_engine.c"
     INCLUDE_DIRS "."
@@ -44,7 +45,7 @@ target_compile_options(${COMPONENT_LIB} PRIVATE "-DCHIP_HAVE_CONFIG_H")
 
 # C-modules zonder C++ extensies
 set_source_files_properties(
-    button.c relay.c sensors.c power_meter.c ade7953.c chip_temp.c hw_config.c ota.c shelly_boot.c loader_migrate.c stock_restore.c stock_fw.c web_api.c status_led.c script_engine.c
+    button.c relay.c sensors.c power_meter.c ade7953.c chip_temp.c hw_config.c ota.c shelly_boot.c loader_migrate.c stock_restore.c stock_fw.c web_api.c log_buffer.c status_led.c script_engine.c
     PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter"
 )
 

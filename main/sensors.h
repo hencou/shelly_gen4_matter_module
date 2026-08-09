@@ -22,6 +22,9 @@ bool sensors_temp_get_centi(int16_t *out);
 /* Latest cached Add-on Analog IN duty cycle (0-100 %), or -1 if unavailable. */
 int sensors_occupancy_duty(void);
 
+/* Why the last DS18B20 attempt failed, for the management page and the log. */
+const char *sensors_temp_error(void);
+
 #ifdef __cplusplus
 }
 #endif
