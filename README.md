@@ -2,6 +2,21 @@
 
 **Custom Matter-over-Thread firmware** for the **Shelly Gen4** line (ESP32-C6) — one image for the Shelly 1, 1PM and 2PM Gen4 — with **Lua scripting** for fully configurable endpoints.
 
+## Disclaimer
+
+> ⚠️ **Read this before you flash anything.**
+>
+> Installing this firmware **voids your Shelly warranty**, and Shelly cannot
+> provide technical support for a device running third-party code. It can remove
+> the factory keys that enable Shelly Cloud and official OTA updates. Treat
+> flashing as **one-way** unless you keep the full-chip backup you make *before*
+> flashing. Incorrect flashing can **brick your device**, so always back up your
+> original firmware before proceeding if reversibility is important to you. You
+> assume all responsibility for any damage, data loss, or device failure.
+>
+> This project is not affiliated with Shelly, Allterco Robotics, CSA, or
+> Espressif Systems.
+
 ## Features
 
 - **Dynamic Matter endpoints** — no hard-coded endpoints. Configure via the web management dashboard
@@ -235,8 +250,9 @@ Once the custom firmware is running you can update it three ways. They all flash
 
 > ⚠️ **Keep a full UART backup as your guaranteed way back.** The management
 > page can flash an original Shelly firmware package back onto the device (see
-> [Return to stock](#4-return-to-stock-shelly-firmware) below), but that path is
-> **not hardware-tested**. The one route that always
+> [Return to stock](#4-return-to-stock-shelly-firmware) below), and that path is
+> verified on a Shelly 1 Gen4 — but it depends on the package matching your
+> device. The one route that always
 > works is restoring the full 8 MB UART backup of that exact device, so make
 > that backup **before** the first flash (with
 > [ESPConnect](https://thelastoutpostworkshop.github.io/microcontroller_devkit/espconnect/)
@@ -287,10 +303,15 @@ The management dashboard (**Backup** tab) can flash an **original Shelly firmwar
 
 The stock app cannot run under our ESP-IDF bootloader (it needs the Shelly OS loader and an `SH0S` boot state), so the module is made **byte-for-byte stock** again. The firmware first writes the stock **app** to the inactive slot and the stock **filesystem**, and verifies their SHA-256 — nothing outside that inactive slot is touched until this succeeds. It then restores, in order, the stock **boot state** (`otadata`), the stock **partition table** (`0x10000`), points the `SH0S` boot-select at the slot the stock app landed in, and finally rewrites the stock **bootloader** (Shelly OS loader) at `0x0`. Every write is verified by read-back. The factory `shelly` partition is never touched. The units are not flash-encrypted, so the plaintext images from the package reproduce the stock layout exactly.
 
-> ⚠️ **This path is not hardware-tested, and the bootloader rewrite at `0x0` is
-> the one irreversible step.** If it is interrupted (power loss mid-write) the
-> device has no valid loader and needs UART recovery. Keep your full 8 MB UART
-> backup as the guaranteed fallback.
+The restore also erases our `nvs` partition, so the device comes back up as a
+factory-fresh stock unit and has to be set up again from scratch.
+
+> ✅ Verified on a **Shelly 1 Gen4**: the stock `S4SW-001X16EU` package restored
+> over the air boots the Shelly OS loader and the stock app again.
+
+> ⚠️ **The bootloader rewrite at `0x0` is the one irreversible step.** If it is
+> interrupted (power loss mid-write) the device has no valid loader and needs
+> UART recovery. Keep your full 8 MB UART backup as the guaranteed fallback.
 
 ### Older modules need a one-time UART reflash
 

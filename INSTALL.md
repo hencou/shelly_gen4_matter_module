@@ -1,5 +1,8 @@
 # Installation and build guide — `shelly_gen4_matter_module`
 
+> ⚠️ **Flashing this firmware voids your Shelly warranty and can brick your
+> device. Read the [Disclaimer](README.md#disclaimer) before you start.**
+
 ⚠️ First build takes **20–45 minutes** because connectedhomeip must compile. After that, incremental builds with ccache take ~1-3 min.
 
 > For Windows users: use [`INSTALL_VSCODE_WINDOWS.md`](INSTALL_VSCODE_WINDOWS.md) (WSL2 + VS Code is the officially recommended route). Native Windows is not supported by esp-matter.
