@@ -14,8 +14,7 @@
 > original firmware before proceeding if reversibility is important to you. You
 > assume all responsibility for any damage, data loss, or device failure.
 >
-> This project is not affiliated with Shelly, Allterco Robotics, CSA, or
-> Espressif Systems.
+> This project is not affiliated with Shelly or Espressif Systems.
 
 ## Features
 
