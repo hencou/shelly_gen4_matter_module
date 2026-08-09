@@ -2,6 +2,8 @@
 
 #include "esp_err.h"
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,6 +33,24 @@ extern "C" {
  *   other esp_err_t       flash/partition error.
  */
 esp_err_t shelly_boot_switch_slot(int slot);
+
+/*
+ * Patch an in-RAM copy of a stock `boot_state.bin` so its SH0S entries select
+ * `slot` (0 -> app_0, 1 -> app_1), mark it committed and clear the boot-attempt
+ * counter, recomputing both CRCs. `state`/`len` cover the whole otadata image;
+ * every 0x1000 sector carrying the SH0S magic is patched.
+ *
+ * Return-to-stock uses this instead of shelly_boot_switch_slot(): the stock
+ * package ships a valid boot state, but it hard-codes app_1 while the stock app
+ * is written to whichever slot is currently inactive. Patching the buffer before
+ * it is flashed means the boot state is correct in a single write, with no
+ * dependency on reading a valid SH0S back from flash -- which is impossible
+ * while the ESP-IDF bootloader is still installed (the stock loader is written
+ * last, on purpose).
+ *
+ * Returns ESP_ERR_NOT_FOUND when the buffer holds no SH0S entry at all.
+ */
+esp_err_t shelly_boot_patch_state(uint8_t *state, size_t len, int slot);
 
 /*
  * Cache the current valid SH0S entry into RAM. Call this once early at boot,
