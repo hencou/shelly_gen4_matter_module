@@ -59,15 +59,11 @@ for the relay(s), wall-switch input(s), onboard button and status LED.
 | **Shelly 1PM Gen4** | GPIO4 | GPIO10 | GPIO1 | GPIO11 | yes (GPIO12) | BL0942 (UART1 GPIO7 + GPIO6, 9600 baud) |
 | **Shelly 2PM Gen4** | GPIO5 + GPIO3 | GPIO11 + GPIO10 | GPIO12 | GPIO18 | yes (GPIO1) | ADE7953 dual-channel (IRQ=GPIO19, I2C SDA=GPIO6 SCL=GPIO7) |
 
-These pins are recovered from the official Shelly stock firmware (2.0.0) by
-disassembling the peripheral constructors in each model's image — see
-[STOCK_GPIO.md](STOCK_GPIO.md) for the evidence per field. The Add-on Analog IN
+See [STOCK_GPIO.md](STOCK_GPIO.md) for the evidence per field. The Add-on Analog IN
 (GPIO17) and 1-Wire (GPIO16 in / GPIO9 out) are identical on every model; only
 Digital IN moves.
 
-> ℹ️ **Shelly 1 Mini Gen4 is supported again.** It was previously excluded
-> because the Mini has no accessible UART pads and the only install path was a
-> one-time UART flash. Since installing straight from the stock Shelly web UI now
+> ℹ️ **Shelly 1 Mini Gen4 is supported.** Since installing straight from the stock Shelly web UI now
 > works (see [Firmware updates](#firmware-updates)), the Mini can be flashed
 > without opening it. The Mini has **no** Shelly Plus Add-on connector, so the
 > add-on inputs are unavailable on it.
@@ -79,10 +75,9 @@ Digital IN moves.
 > hardware before the reported voltage/current/power values are trustworthy.
 
 > ⚠️ **ADE7953 I2C pins are the one unverified value.** Stock reads the I2C
-> SDA/SCL pins from the device configuration in NVS instead of hardcoding them,
-> so they cannot be recovered from the firmware image. Only the ADE7953 IRQ
-> (GPIO19) is confirmed. The 2PM relay/switch pins themselves *are* confirmed:
-> the ESPHome device DB
+> SDA/SCL pins from the device configuration in NVS instead of hardcoding them.
+> Only the ADE7953 IRQ (GPIO19) is confirmed. The 2PM relay/switch pins themselves
+>  *are* confirmed: the ESPHome device DB
 > (https://devices.esphome.io/devices/shelly-plus-2pm-gen-4/) contradicts itself
 > on GPIO5/GPIO3/GPIO11/GPIO10, and stock agrees with its YAML config (relays on
 > GPIO5/GPIO3, switches on GPIO11/GPIO10).
@@ -116,7 +111,7 @@ Notes:
 There are two ways to install the firmware for the first time.
 
 **Option A — from the stock Shelly web UI (no UART, no opening the device):**
-build the web-UI package and upload it through the stock Shelly device page
+build the web-UI zip package and upload it through the stock Shelly device page
 (**Settings → Firmware**, "install from file"):
 
 ```bash
@@ -281,13 +276,6 @@ The package ships **no bootloader** and **no partition table** — only `nvs`, `
 
 > The migration is idempotent and self-terminating: once our ESP-IDF bootloader is at `0x0` the loader detection no longer sees the stock loader, so it never runs again. If a migration write ever fails, the app keeps running fine under the stock loader (OTA then uses `SH0S`); the firmware auto-detects which bootloader is present and picks the matching boot-select, so both paths keep working.
 
-> **Install from stock: update to stock v2.0 first.** On a factory unit that still
-> carries the dual-variant layout (`S1G4` Matter + `S1G4ZB` Zigbee), stock 2.0's
-> variant guard refuses to switch to a foreign app and the module keeps booting
-> stock. Run the stock **1.5.x → 2.0** update first (collapses it to a single
-> `S1G4` variant), reboot, then upload this package. See the warning under
-> [First flash](#1-first-flash).
-
 ### 4. Return to stock Shelly firmware
 
 The management dashboard (**Backup** tab) can flash an **original Shelly firmware package** back onto the module — the same `.zip` the stock web UI consumes. Download the package matching the model on your device label from the [community firmware archive](https://archive.shelly-tools.de/) (e.g. `S4SW-001X16EU` = Shelly 1 Gen4), then upload it under *Return to stock Shelly firmware*.
@@ -303,12 +291,6 @@ factory-fresh stock unit and has to be set up again from scratch.
 > ⚠️ **The bootloader rewrite at `0x0` is the one irreversible step.** If it is
 > interrupted (power loss mid-write) the device has no valid loader and needs
 > UART recovery. Keep your full 8 MB UART backup as the guaranteed fallback.
-
-### Older modules need a one-time UART reflash
-
-Modules flashed with an early build (via ESPConnect) run an ESP-IDF bootloader whose partition table sits at `0x8000` with the ESP-IDF-default geometry (`otadata@0xf000`, 2.5 MB OTA slots at `0x20000`/`0x2a0000`). This firmware reads its table at `0x10000` (the stock Shelly offset). Those two layouts are incompatible: `0x10000` is the **second `otadata` sector** on the old geometry, so an over-the-air update onto such a module boots once into the new image but reverts to the old one on the next reboot (the new slot is never marked valid because `otadata` is disturbed).
-
-Therefore old modules must be brought onto the current layout with a **one-time UART reflash** of the full merged image (`tools/make_factory_bin_file.sh`, flash at offset `0x0` with *Erase entire flash before writing*). This writes the partition table at `0x10000` with the stock geometry, after which all further updates are OTA and persist across reboots. A full erase also clears the Matter fabrics, so re-commission the module afterwards (make a dashboard backup first if needed).
 
 ## Pin mapping
 
