@@ -2,7 +2,7 @@
  * Button driver for the device inputs. GPIOs come from the active hardware
  * profile (hw_config.c); the values below are the Shelly 1 Gen4 defaults.
  *   INPUT_PUSHBUTTON  (GPIO10) wall-switch / pushbutton input
- *   INPUT_TOUCH       (GPIO18) Add-on digital input terminal (Add-on models only)
+ *   INPUT_TOUCH       Add-on digital input terminal (Add-on models only, pin per model)
  *   INPUT_DEVICE_BTN  (GPIO4)  onboard pair button
  *   INPUT_SWITCH_2    (GPIO10) 2nd wall-switch input (Shelly 2PM Gen4 only)
  *
@@ -247,8 +247,8 @@ void button_driver_init(button_cb_t cb)
 
     const hw_profile_t *hw = hw_profile();
     const int switch_gpio = hw->switch_gpio;
-    const int touch_gpio  = PIN_TOUCH_INPUT;
-    const bool touch_on   = hw->has_addon;   /* Add-on inputs: 1 Gen4 + 1PM, not Mini */
+    const int touch_gpio  = hw->addon_digital_gpio;
+    const bool touch_on   = hw->has_addon && touch_gpio >= 0;
 
     /* INPUT_PUSHBUTTON: wall-switch input, active-high in production
      * (optocoupler 230V), active-low in BENCH_MODE (internal pull-up). */
@@ -256,8 +256,8 @@ void button_driver_init(button_cb_t cb)
     s_state[INPUT_PUSHBUTTON].enabled    = true;
     s_state[INPUT_PUSHBUTTON].active_low = (g_bench_mode != 0);
 
-    /* INPUT_TOUCH: Add-on digital input terminal (GPIO18). Only present on
-     * the full-size 1 Gen4; disabled on Mini/PM which have no Add-on.
+    /* INPUT_TOUCH: Add-on digital input terminal. The pin differs per model
+     * (1 Gen4 GPIO18, 1PM GPIO12, 2PM GPIO1) and the Mini has no Add-on.
      * Connecting to GND = pressed -> active-low. Internal pull-up provides
      * a definite idle-HIGH state; the Add-on isolator does not supply a
      * pull-up on the ESP32 side of this line. */

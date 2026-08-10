@@ -16,10 +16,6 @@ menu "Shelly 1 Gen4 Matter Switch configuration"
         int "GPIO for 1-Wire RX (input) — Shelly Plus Add-on data in via ISO7221A isolator"
         default 16
 
-    config PIN_TOUCH_INPUT
-        int "GPIO for TTP223 capacitive touch button — Shelly Plus Add-on digital input"
-        default 18
-
     config PIN_LD2410_INPUT
         int "GPIO for HLK-LD2410 occupancy sensor — Shelly Plus Add-on analog input"
         default 17

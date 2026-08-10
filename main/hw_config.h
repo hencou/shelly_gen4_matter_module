@@ -13,10 +13,9 @@ extern "C" {
  *
  * The Gen4 line shares one ESP32-C6 module (ESP-Shelly-C68F) but wires the
  * relay, wall-switch input, onboard button and status LED to different GPIOs
- * per device. The 1/Mini/1PM pin assignments are taken from published Gen4
- * GPIO documentation; the 2PM pins follow the ESPHome device config. See
- * hw_config.c for the full table — only the 1 Gen4 is confirmed on hardware
- * here.
+ * per device. The pin assignments are recovered from the official Shelly
+ * stock firmware images (2.0.0) by disassembly — see hw_config.c for the
+ * full table and STOCK_GPIO.md for how each field was proven.
  *
  * The active profile is chosen at runtime (stored in NVS, selectable on the
  * management dashboard) instead of compile time, so one firmware image serves
@@ -48,7 +47,8 @@ typedef struct {
     int button_gpio;         /* onboard pair button (active-low) */
     int led_gpio;            /* status LED (-1 = none) */
     bool led_active_high;
-    bool has_addon;          /* Shelly Plus Add-on inputs (1-Wire/touch/analog) */
+    bool has_addon;          /* Shelly Plus Add-on inputs (1-Wire/digital/analog) */
+    int addon_digital_gpio;  /* Add-on Digital IN (-1 = none); differs per model */
     bool has_pm;             /* any power meter present (pm_type != PM_NONE) */
     pm_kind_t pm_type;       /* which meter IC */
     int pm_uart_tx;          /* BL0942 UART TX (PM_BL0942) */

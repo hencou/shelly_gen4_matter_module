@@ -106,5 +106,4 @@ CONFIG_PIN_ONEWIRE_RX=16
 CONFIG_PIN_STATUS_LED=15
 # STATUS_LED_ACTIVE_HIGH: default n (active-low) — no extra line needed
 # Add-on inputs: TTP223 touch on GPIO18, LD2410 occupancy on GPIO17 — both always active
-CONFIG_PIN_TOUCH_INPUT=18
 CONFIG_PIN_LD2410_INPUT=17
