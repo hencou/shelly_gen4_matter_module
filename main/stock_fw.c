@@ -9,6 +9,7 @@
 
 #include "esp_log.h"
 #include "esp_partition.h"
+#include "hw_config.h"
 #include "esp_http_client.h"
 #include "cJSON.h"
 
@@ -18,11 +19,25 @@ static const char *TAG = "stock_fw";
  * Matter credentials too, so only read the small head we need for the model. */
 #define SHELLY_HEAD_LEN 3072
 
-/* Model (device label) -> Shelly update app code. Only the Shelly 1 Gen4 entry
- * is confirmed against real hardware; unknown models fall back to querying the
- * model string itself, which the endpoint may or may not accept. */
+/* Model (device label) -> Shelly update app code. The model strings come from
+ * the per-model pin tables inside the stock images themselves; every app code
+ * below is confirmed to resolve on updates.shelly.cloud. The Mini images carry
+ * no model string, so a Mini is recognised through the hardware profile. */
 static const struct { const char *model; const char *app; } MODEL_APP[] = {
-    { "S4SW-001X16EU", "S1G4" },   /* Shelly 1 Gen4 */
+    { "S4SW-001X16EU", "S1G4"   },   /* Shelly 1 Gen4 */
+    { "S4SW-001P16EU", "S1PMG4" },   /* Shelly 1PM Gen4 */
+    { "S4SW-002P16EU", "S2PMG4" },   /* Shelly 2PM Gen4 */
+};
+
+/* Fallback when the factory model is unknown: the app code for the device type
+ * selected on the management page. Matter firmware only — the Zigbee variants
+ * ("...ZB") are a different build for the same hardware and must never be
+ * flashed onto a Matter module. */
+static const char *APP_FOR_HW_TYPE[HW_TYPE_COUNT] = {
+    [HW_1_GEN4]      = "S1G4",
+    [HW_1_MINI_GEN4] = "Mini1G4",
+    [HW_1PM_GEN4]    = "S1PMG4",
+    [HW_2PM_GEN4]    = "S2PMG4",
 };
 
 const char *stock_fw_app_for_model(const char *model)
@@ -121,7 +136,12 @@ esp_err_t stock_fw_info_get(httpd_req_t *req)
     }
 
     const char *app = stock_fw_app_for_model(model);
-    /* Unknown model: try the model string itself as a best-effort app code. */
+    if (!app) {
+        /* Unknown model (e.g. a Mini, whose stock image carries no model
+         * string): fall back to the selected device type. */
+        hw_device_type_t t = hw_profile()->type;
+        if ((int)t >= 0 && (int)t < HW_TYPE_COUNT) app = APP_FOR_HW_TYPE[t];
+    }
     const char *query = app ? app : model;
 
     char *body = malloc(2048);

@@ -39,8 +39,8 @@ extern "C" {
 extern int g_bench_mode;
 void bench_mode_init(void);
 
-/* Add-on inputs — always active. */
-#define PIN_TOUCH_INPUT     CONFIG_PIN_TOUCH_INPUT      /* TTP223 capacitive touch (GPIO18) */
+/* Add-on inputs — always active. Digital IN is model-dependent and lives in
+ * the hardware profile (hw_profile()->addon_digital_gpio). */
 #define PIN_LD2410_INPUT    CONFIG_PIN_LD2410_INPUT      /* Analog IN — PWM duty cycle (GPIO17) */
 
 #define PIN_STATUS_LED      CONFIG_PIN_STATUS_LED      /* Shelly Add-on LED, -1 = disabled */

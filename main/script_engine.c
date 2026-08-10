@@ -14,6 +14,7 @@
 
 #include "script_engine.h"
 #include "app_config.h"
+#include "hw_config.h"
 #include "relay.h"
 #include "sensors.h"
 #include "matter_device.h"
@@ -602,8 +603,11 @@ static void script_engine_task(void *arg)
         }
 
         /* Update input state (analog, digital) */
-        s_digital_in = gpio_get_level(PIN_TOUCH_INPUT);
-        s_sw_state = gpio_get_level(PIN_SWITCH_INPUT);
+        const hw_profile_t *hw = hw_profile();
+        if (hw->has_addon && hw->addon_digital_gpio >= 0) {
+            s_digital_in = gpio_get_level(hw->addon_digital_gpio);
+        }
+        s_sw_state = gpio_get_level(hw->switch_gpio);
     }
 }
 

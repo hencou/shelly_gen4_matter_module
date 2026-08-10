@@ -52,12 +52,18 @@ the model on the management dashboard (**Hardware → Device Type**); the choice
 stored in NVS and applied on the next boot. The correct GPIO mapping is then used
 for the relay(s), wall-switch input(s), onboard button and status LED.
 
-| Model | Relay | Switch | Button | Status LED | Add-on | Power meter |
+| Model | Relay | Switch | Button | Status LED | Add-on (Digital IN) | Power meter |
 |---|---|---|---|---|---|---|
-| **Shelly 1 Gen4** (default) | GPIO5 | GPIO10 | GPIO4 | GPIO15 | yes | — |
+| **Shelly 1 Gen4** (default) | GPIO5 | GPIO10 | GPIO4 | GPIO15 | yes (GPIO18) | — |
 | **Shelly 1 Mini Gen4** | GPIO10 | GPIO12 | GPIO22 | GPIO5 | — | — |
-| **Shelly 1PM Gen4** | GPIO4 | GPIO10 | GPIO1 | GPIO0 | yes | BL0942 (UART1 TX=GPIO6 RX=GPIO7, 9600 baud) |
-| **Shelly 2PM Gen4** | GPIO5 + GPIO3 | GPIO11 + GPIO10 | GPIO12 | GPIO0 | yes | ADE7953 dual-channel (I2C SDA=GPIO6 SCL=GPIO7, IRQ=GPIO19) |
+| **Shelly 1PM Gen4** | GPIO4 | GPIO10 | GPIO1 | GPIO11 | yes (GPIO12) | BL0942 (UART1 GPIO7 + GPIO6, 9600 baud) |
+| **Shelly 2PM Gen4** | GPIO5 + GPIO3 | GPIO11 + GPIO10 | GPIO12 | GPIO18 | yes (GPIO1) | ADE7953 dual-channel (IRQ=GPIO19, I2C SDA=GPIO6 SCL=GPIO7) |
+
+These pins are recovered from the official Shelly stock firmware (2.0.0) by
+disassembling the peripheral constructors in each model's image — see
+[STOCK_GPIO.md](STOCK_GPIO.md) for the evidence per field. The Add-on Analog IN
+(GPIO17) and 1-Wire (GPIO16 in / GPIO9 out) are identical on every model; only
+Digital IN moves.
 
 > ℹ️ **Shelly 1 Mini Gen4 is supported again.** It was previously excluded
 > because the Mini has no accessible UART pads and the only install path was a
@@ -67,19 +73,19 @@ for the relay(s), wall-switch input(s), onboard button and status LED.
 > add-on inputs are unavailable on it.
 
 > ⚠️ **Test status:** only the **Shelly 1 Gen4** has been verified on real
-> hardware. The **1 Mini Gen4**, **1PM Gen4** and **2PM Gen4** profiles are
-> implemented from the published pinouts but have **not** been hardware-tested.
-> The BL0942 and ADE7953 scaling constants are placeholders and **must** be
-> calibrated against a known load on real hardware before the reported
-> voltage/current/power values are trustworthy.
+> hardware. The other three profiles match the stock firmware pin-for-pin but
+> have **not** been hardware-tested. The BL0942 and ADE7953 scaling constants
+> are placeholders and **must** be calibrated against a known load on real
+> hardware before the reported voltage/current/power values are trustworthy.
 
-> ⚠️ **2PM pinout conflict — VERIFY before connecting mains.** The ESPHome device
-> DB (https://devices.esphome.io/devices/shelly-plus-2pm-gen-4/) is internally
-> inconsistent: its human-readable "GPIO Pinout" table swaps relay ↔ switch on
-> GPIO5/GPIO3/GPIO11/GPIO10 relative to its working YAML config. This firmware
-> follows the **YAML config** (relays on GPIO5/GPIO3, switches on GPIO11/GPIO10).
-> Confirm the mapping on your own 2PM before wiring it to mains — driving a
-> switch-input pin as a relay output can damage the device.
+> ⚠️ **ADE7953 I2C pins are the one unverified value.** Stock reads the I2C
+> SDA/SCL pins from the device configuration in NVS instead of hardcoding them,
+> so they cannot be recovered from the firmware image. Only the ADE7953 IRQ
+> (GPIO19) is confirmed. The 2PM relay/switch pins themselves *are* confirmed:
+> the ESPHome device DB
+> (https://devices.esphome.io/devices/shelly-plus-2pm-gen-4/) contradicts itself
+> on GPIO5/GPIO3/GPIO11/GPIO10, and stock agrees with its YAML config (relays on
+> GPIO5/GPIO3, switches on GPIO11/GPIO10).
 
 Notes:
 - **Changing the device type does not require Matter re-commissioning** — the
@@ -98,7 +104,7 @@ Notes:
 
 | Component | Details |
 |---|---|
-| Shelly Plus Add-on | DS18B20 (TX=GPIO9/RX=GPIO16) + TTP223 touch (GPIO18) + Analog IN (GPIO17) |
+| Shelly Plus Add-on | DS18B20 (TX=GPIO9/RX=GPIO16) + Digital IN (GPIO18 on the 1 Gen4) + Analog IN (GPIO17) |
 | Thread Border Router | Google TV Streamer 4K (or any Thread BR) |
 | Matter controller | Home Assistant Matter Server, Google Home, Apple Home |
 | Commissioning | HA Matter Server UI or `chip-tool` |
@@ -345,7 +351,7 @@ Therefore old modules must be brought onto the current layout with a **one-time 
 | `input.button_event()` | string or nil | Last button event (see events table below) |
 | `input.button_id()` | integer | Input that triggered the event: `0`=SW, `1`=Digital IN, `2`=PCB button, `3`=SW2 (2PM) |
 | `input.sw()` | boolean | Current state of SW input (GPIO10) |
-| `input.digital()` | boolean | Current state of Digital IN (GPIO18) |
+| `input.digital()` | boolean | Current state of Digital IN (GPIO18 on the 1 Gen4) |
 | `input.device_btn()` | boolean | Current state of PCB button (GPIO4) |
 | `input.analog()` | integer | Analog IN duty cycle 0–100 % (GPIO17) |
 | `input.temperature()` | number | DS18B20 (Add-on) temperature in °C |
@@ -373,7 +379,7 @@ pins; the 2PM-specific pins are noted separately.
 | ID | Input | GPIO |
 |---|---|---|
 | `0` | SW (1st wall switch) | GPIO10 (1 Gen4) — **GPIO11 on 2PM** |
-| `1` | Digital IN (add-on) | GPIO18 |
+| `1` | Digital IN (add-on) | GPIO18 (1 Gen4) — **GPIO12 on 1PM, GPIO1 on 2PM** |
 | `2` | PCB button (onboard) | GPIO4 |
 | `3` | SW2 (2nd wall switch, 2PM only) | **GPIO10 on 2PM** |
 

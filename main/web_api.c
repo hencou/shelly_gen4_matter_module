@@ -156,7 +156,8 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
     int pcb_level = gpio_get_level(hw->button_gpio);
     int pcb_active = !pcb_level;
 
-    int dig_level = hw->has_addon ? gpio_get_level(PIN_TOUCH_INPUT) : 0;
+    const int dig_gpio = hw->addon_digital_gpio;
+    int dig_level = (hw->has_addon && dig_gpio >= 0) ? gpio_get_level(dig_gpio) : 0;
 
     char ana_str[32];
     char temp_str[64];
@@ -188,9 +189,9 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
     }
 
     char dig_str[40];
-    if (hw->has_addon) {
+    if (hw->has_addon && dig_gpio >= 0) {
         snprintf(dig_str, sizeof(dig_str), "%s (GPIO%d=%d)",
-                 dig_level ? "HIGH" : "LOW", PIN_TOUCH_INPUT, dig_level);
+                 dig_level ? "HIGH" : "LOW", dig_gpio, dig_level);
     } else {
         snprintf(dig_str, sizeof(dig_str), "N/A (no Add-on)");
     }
