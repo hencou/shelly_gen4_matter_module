@@ -466,7 +466,7 @@ shelly_gen4_matter_module/
 ├── components/lua/         # Lua 5.4 as ESP-IDF component
 ├── tools/
 │   ├── make-matter-ota.py       # build Matter OTA image (.ota) — see Firmware updates
-│   ├── make-webui-ota-zip.py    # legacy: Shelly 1.x web-UI OTA zip (unsupported)
+│   ├── make-webui-ota-zip.py    # build Shelly Stock web-UI OTA zip
 │   ├── make_factory_bin_file.sh # merge binaries for UART/ESPConnect flashing
 │   ├── create_matter_cluster_group.py  # set up multicast group + bindings
 │   └── shelly-overview.sh       # clickable HTML overview of modules via mDNS
