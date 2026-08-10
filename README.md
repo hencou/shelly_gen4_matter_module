@@ -127,20 +127,6 @@ ESP-IDF bootloader + `otadata`, so OTA no longer depends on the stock loader's
 proprietary `SH0S` boot-select or on future Shelly loader changes. This is the
 only way to install on a **Shelly 1 Mini Gen4**, which has no accessible UART pads.
 
-> ⚠️ **Update the device to stock Shelly v2.0 first, then flash our package.**
-> Fresh units often ship as a *dual-variant* build with a Matter app (`S1G4`) in
-> one slot and a Zigbee app (`S1G4ZB`) in the other. Stock 2.0 has a firmware
-> **variant guard** (`shelly_alternative.c: Not switching fw variant`) that
-> refuses to boot a foreign app on such a unit, so the install appears to "revert
-> to stock". Running the normal stock **1.5.x → 2.0** update first collapses the
-> unit to a single Matter variant (both slots `S1G4`), after which our web-UI
-> package installs correctly. Do the stock 2.0 update, reboot, *then* upload our
-> `.zip`.
-
-> ✅ Verified on a **Shelly 1 Gen4** on stock **v2.0** (both after a factory-2.0
-> unit was updated 1.5.99 → 2.0, and on a unit already running 2.0). The layout is
-> identical on stock 1.5/1.7/2.0 (same offsets). These units are not
-> flash-encrypted, so writing our plaintext ESP-IDF bootloader is safe.
 > Keep a full backup before flashing (see the warning under
 > [Firmware updates](#firmware-updates)).
 
