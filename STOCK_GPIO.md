@@ -2,7 +2,7 @@
 
 The per-model pin table in `main/hw_config.c` used to come from published Gen4
 pinout pages and an ESPHome device config. This document records where each pin
-actually comes from: the official Shelly stock firmware images, disassembled.
+actually comes from: the official Shelly stock firmware images.
 
 ## Method
 
@@ -21,26 +21,6 @@ https://updates.shelly.cloud/update/<app code>
 | Shelly Mini 1PM Gen4 | `Mini1PMG4` | 2.0.0 |
 | Shelly 2PM Gen4 | `S2PMG4` | 2.0.0 |
 
-The Zigbee variants (`...ZB`) are separate builds for the same hardware and were
-deliberately not analysed.
-
-Each `<model>.bin` is an ESP-IDF application image; its segments were split out
-and disassembled (RISC-V, ESP32-C6). Pins were not read off raw constants —
-every value below was taken from the argument registers at a call site whose
-target is identified by the log/assert strings it references, so the *meaning*
-of each argument is established, not guessed:
-
-- the input peripheral constructor (`shelly_input_peripheral`),
-- the output peripheral constructor (`shelly_output_peripheral.hpp`, `"init"`),
-- the status-LED constructor (referencing the component name `sys_led`),
-- the BL0942 UART setup (`shos_bl0942_uart.c`, `"Can't configure UART%d"`),
-- the Add-on pin struct consumed by the RMT duty-cycle reader, the input
-  peripheral and the OneWire/DHT22 driver (`shelly_dht22.cpp`).
-
-The 1 Gen4 result is the control: it reproduces exactly the pins that are
-confirmed on real hardware here (relay 5, switch 10, button 4, LED 15, Add-on
-digital 18, 1-Wire 16/9, analog 17). That is what makes the same extraction
-trustworthy for the models we cannot test.
 
 ## Result
 
@@ -49,13 +29,12 @@ trustworthy for the models we cannot test.
 | Relay | 5 | 10 | 4 | 5 + 3 |
 | Wall switch | 10 | 12 | 10 | 11 + 10 |
 | Onboard button | 4 | 22 | 1 | 12 |
-| Status LED | 15 | 5 | **11** | **18** |
+| Status LED | 15 | 5 | 11 | 18 |
 | Add-on Analog IN | 17 | — | 17 | 17 |
-| Add-on Digital IN | 18 | — | **12** | **1** |
+| Add-on Digital IN | 18 | — | 12 | 1 |
 | Add-on 1-Wire in/out | 16 / 9 | — | 16 / 9 | 16 / 9 |
 | Power meter | — | — | BL0942 UART0, 7 + 6 | ADE7953, IRQ 19 |
 
-Bold = differs from what this firmware used before.
 
 Notes on individual findings:
 
