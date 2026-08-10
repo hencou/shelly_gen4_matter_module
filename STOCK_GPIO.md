@@ -1,4 +1,4 @@
-# GPIO mapping recovered from the official Shelly firmware
+# GPIO mapping
 
 The per-model pin table in `main/hw_config.c` used to come from published Gen4
 pinout pages and an ESPHome device config. This document records where each pin
