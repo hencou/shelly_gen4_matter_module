@@ -1086,16 +1086,6 @@ static esp_err_t api_owprobe_get(httpd_req_t *req)
     return ESP_OK;
 }
 
-static esp_err_t api_owscan_get(httpd_req_t *req)
-{
-    static char out[1024];
-    sensors_ow_pin_scan(out, sizeof(out));
-
-    httpd_resp_set_type(req, "text/plain");
-    httpd_resp_sendstr(req, out);
-    return ESP_OK;
-}
-
 /* ---------- HTTP server ---------- */
 
 static httpd_handle_t s_srv = NULL;
@@ -1112,7 +1102,7 @@ void web_api_start_httpd(void)
     hc.recv_wait_timeout  = 30;
     hc.send_wait_timeout  = 10;
     hc.max_open_sockets   = 3;
-    hc.max_uri_handlers   = 26;
+    hc.max_uri_handlers   = 24;
     ESP_ERROR_CHECK(httpd_start(&srv, &hc));
 
     httpd_uri_t get_root          = { "/",                  HTTP_GET,    form_get,              NULL };
@@ -1138,7 +1128,6 @@ void web_api_start_httpd(void)
     httpd_uri_t get_stock_fw      = { "/api/stock-fw",      HTTP_GET,    stock_fw_info_get,     NULL };
     httpd_uri_t get_log           = { "/api/log",           HTTP_GET,    api_log_get,           NULL };
     httpd_uri_t get_owprobe       = { "/api/owprobe",       HTTP_GET,    api_owprobe_get,       NULL };
-    httpd_uri_t get_owscan        = { "/api/owscan",        HTTP_GET,    api_owscan_get,        NULL };
 
     httpd_register_uri_handler(srv, &get_root);
     httpd_register_uri_handler(srv, &post_upload);
@@ -1163,7 +1152,6 @@ void web_api_start_httpd(void)
     httpd_register_uri_handler(srv, &get_stock_fw);
     httpd_register_uri_handler(srv, &get_log);
     httpd_register_uri_handler(srv, &get_owprobe);
-    httpd_register_uri_handler(srv, &get_owscan);
 
     s_srv = srv;
 }

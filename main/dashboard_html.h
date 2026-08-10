@@ -133,8 +133,7 @@ static const char MGMT_HTML[] =
 "</table>"
 
 "<p><button class='btn btn-blue' onclick=runOwProbe()>Diagnose 1-Wire</button>"
-"<button class='btn btn-gray' onclick=runOwScan()>Find data pin</button>"
-"<span class=info> drives the Add-on bus and reports what the pins do; the scan takes a few seconds</span></p>"
+"<span class=info> drives the Add-on bus for about a second and reports what the pins do</span></p>"
 "<pre id=ow-out style='display:none;font-size:.8em;white-space:pre-wrap;"
 "border:1px solid #ccc;border-radius:3px;padding:.5em'></pre>"
 "<div id=hw-msg class=msg></div>"
@@ -416,15 +415,6 @@ static const char MGMT_HTML[] =
 "  x.onload=function(){e.textContent=x.responseText};"
 "  x.onerror=function(){e.textContent='probe request failed'};"
 "  x.open('GET','/api/owprobe');x.send();"
-"}"
-
-"function runOwScan(){"
-"  var e=document.getElementById('ow-out');"
-"  e.style.display='block';e.textContent='scanning pins...';"
-"  var x=new XMLHttpRequest();"
-"  x.onload=function(){e.textContent=x.responseText};"
-"  x.onerror=function(){e.textContent='scan request failed'};"
-"  x.open('GET','/api/owscan');x.send();"
 "}"
 
 "function startHWTimer(){if(!hwTimer)hwTimer=setInterval(loadHW,5000)}"
