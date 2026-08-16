@@ -195,6 +195,7 @@ Our build produces 4 separate binaries that each need to be at their own offset 
 cd ~/projects/shelly_gen4_matter_module
 idf.py build      # ensures all 4 binaries are up to date
 
+# Or simply: bash tools/make_factory_bin_file.sh (handles esptool 4.x vs 5.x)
 esptool.py --chip esp32c6 merge_bin \
     -o shelly_gen4_matter_module_merged.bin \
     --flash_mode dio --flash_freq 80m --flash_size 8MB \
@@ -207,7 +208,10 @@ esptool.py --chip esp32c6 merge_bin \
 cp shelly_gen4_matter_module_merged.bin /mnt/c/Users/<USERNAME>/Downloads/
 ```
 
-Tip: put those last three commands in a script `tools/make-merged.sh` for later iterations.
+On esptool 5.x this prints deprecation warnings (it renamed `merge_bin` to
+`merge-bin` and `--flash_*` to `--flash-*`); the image is fine either way.
+`tools/make_factory_bin_file.sh` picks the right spelling for the installed
+version, so prefer that over typing the command by hand.
 
 **Step 2 — flash via ESPConnect:**
 
