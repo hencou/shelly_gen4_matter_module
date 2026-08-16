@@ -29,14 +29,26 @@ for f in "${REQUIRED[@]}"; do
     fi
 done
 
-if ! command -v esptool.py >/dev/null 2>&1; then
-    echo "ERROR: esptool.py not on PATH — source ESP-IDF first: . ~/esp/esp-idf/export.sh" >&2
+if command -v esptool >/dev/null 2>&1; then
+    ESPTOOL=esptool
+elif command -v esptool.py >/dev/null 2>&1; then
+    ESPTOOL=esptool.py
+else
+    echo "ERROR: esptool not on PATH — source ESP-IDF first: . ~/esp/esp-idf/export.sh" >&2
     exit 1
 fi
 
-esptool.py --chip esp32c6 merge_bin \
+# esptool 5.x renamed the subcommand and its options and warns about the old
+# spelling; ESP-IDF v5.5.x still ships esptool 4.x, which only knows the old one.
+MAJOR="$("${ESPTOOL}" version 2>/dev/null | tail -1 | cut -d. -f1)"
+if [[ "${MAJOR}" =~ ^[0-9]+$ ]] && (( MAJOR >= 5 )); then
+    MERGE=(merge-bin --flash-mode dio --flash-freq 80m --flash-size 8MB)
+else
+    MERGE=(merge_bin --flash_mode dio --flash_freq 80m --flash_size 8MB)
+fi
+
+"${ESPTOOL}" --chip esp32c6 "${MERGE[@]}" \
     -o "${OUT}" \
-    --flash_mode dio --flash_freq 80m --flash_size 8MB \
     0x0      "${BUILD_DIR}/bootloader/bootloader.bin" \
     0x10000  "${BUILD_DIR}/partition_table/partition-table.bin" \
     0x11000  "${BUILD_DIR}/ota_data_initial.bin" \
