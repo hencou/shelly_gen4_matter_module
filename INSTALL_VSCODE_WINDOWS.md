@@ -103,7 +103,7 @@ Close and reopen the Ubuntu terminal (or `exit` + `wsl`) so the group change tak
 ```bash
 mkdir -p ~/esp
 cd ~/esp
-git clone --depth 1 https://github.com/espressif/esp-idf.git
+git clone --recursive -b v5.5.5 https://github.com/espressif/esp-idf.git
 
 cd ~/esp/esp-idf
 ./install.sh esp32c6
@@ -114,7 +114,7 @@ idf.py --version
 
 Expected output:
 ```
-ESP-IDF v5.x.x
+ESP-IDF v5.5.5
 ```
 
 Duration: 10-15 minutes.
@@ -129,7 +129,7 @@ ESP-Matter has many submodules via `connectedhomeip`. We use a **stable release 
 cd ~/esp
 source esp-idf/export.sh
 
-git clone --depth 1 -b release/v1.4 https://github.com/espressif/esp-matter.git
+git clone --depth 1 -b release/v1.5 https://github.com/espressif/esp-matter.git
 cd esp-matter
 git submodule update --init --depth 1
 ```
@@ -225,7 +225,7 @@ The command palette (`F1`) then shows ESP-IDF commands like **"Open ESP-IDF Term
 If the wizard is needed (e.g. config validation fails): choose **"Use existing setup"** with:
 - ESP-IDF dir: `/home/<user>/esp/esp-idf`
 - Tools dir: `/home/<user>/.espressif`
-- Python venv: `/home/<user>/.espressif/python_env/idf5.2_py3.10_env/bin/python`
+- Python venv: `/home/<user>/.espressif/python_env/idf5.5_py3.10_env/bin/python`
 
 ---
 
@@ -411,7 +411,7 @@ idf.py -p /dev/ttyUSB0 flash monitor
 
 ---
 
-## 15. Known build issues with esp-matter `release/v1.4`
+## 15. Known build issues with older esp-matter release branches
 
 These project templates are already fixed; listed here for reference for anyone setting up their own Matter projects on v1.4.
 
