@@ -40,9 +40,9 @@ Each script slot can be configured as one of these Matter endpoint types:
 
 ## Based on
 
-- [esp-matter](https://github.com/espressif/esp-matter) with **Matter 1.5** support
+- [esp-matter](https://github.com/espressif/esp-matter) `release/v1.5` (**Matter 1.5.1**)
 - [connectedhomeip](https://github.com/project-chip/connectedhomeip) (as submodule within esp-matter)
-- ESP-IDF v5.5.4
+- ESP-IDF v5.5.5
 - Lua 5.4 (compiled as component)
 
 ## Target hardware
@@ -189,7 +189,7 @@ reset/commissioned switch times out while resolving the lamp, even though the
 lamp is reachable and works from Home Assistant.
 
 > **Not available on this SDK.** Running an on-device SRP / DNS-SD *server*
-> requires `CONFIG_OPENTHREAD_BORDER_ROUTER=y`, which on ESP-IDF v5.5.4 wires
+> requires `CONFIG_OPENTHREAD_BORDER_ROUTER=y`, which on ESP-IDF v5.5.x wires
 > the ESP border-router glue. After commissioning, the Thread stack calls
 > `otThreadSetEnabled(true)` (only when a dataset is stored), which hangs on a
 > Thread-only device that has no infra/backbone interface — the module never
