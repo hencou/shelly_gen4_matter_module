@@ -52,6 +52,7 @@ extern "C" {
 #include <controller/InvokeInteraction.h>
 #include <credentials/FabricTable.h>
 #include <credentials/GroupDataProvider.h>
+#include <transport/SessionHolder.h>
 #include <platform/PlatformManager.h>
 #include <platform/ThreadStackManager.h>
 #include <platform/ConnectivityManager.h>
@@ -146,23 +147,6 @@ struct BindingCommandData
     uint16_t colorTempRate   = 0;
 };
 
-/* Typed lambda callbacks for InvokeCommandRequest.
- * - onSuccess receives the typed ResponseType (generic via auto&)
- * - onError receives only CHIP_ERROR
- */
-static auto make_on_success() {
-    return [](const chip::app::ConcreteCommandPath & path,
-              const chip::app::StatusIB & /*status*/,
-              const auto & /*response*/) {
-        ESP_LOGI(TAG, "Invoke success ep=%u cmd=0x%lx",
-                 path.mEndpointId, (unsigned long) path.mCommandId);
-    };
-}
-static auto make_on_error() {
-    return [](CHIP_ERROR err) {
-        ESP_LOGW(TAG, "Invoke failure: %" CHIP_ERROR_FORMAT, err.Format());
-    };
-}
 
 /* ------------- Multicast helpers (no CASE session needed) ------------- */
 
@@ -334,16 +318,90 @@ static void send_colorcontrol_multicast(const BindingCommandData &d, const Bindi
  * Uses FindOrEstablishSession directly for unicast commands, so that
  * in the OnDeviceConnected callback we immediately send the command
  * via InvokeCommandRequest.
+ *
+ * FindOrEstablishSession hands back a cached CASE session, which may have died
+ * without either side noticing (peer rebooted, changed its IPv6 address, or the
+ * route went away). MRP only concludes that after five retransmissions, ~35 s,
+ * by which time the command is long irrelevant for a wall switch. So the invoke
+ * carries a short response timeout, and on timeout the session is marked
+ * defunct — which excludes it from the next lookup — and the command is sent
+ * once more over a freshly established session.
  */
+static constexpr uint32_t kInvokeResponseTimeoutMs = 5000;
+
 struct DirectSendCtx {
     BindingCommandData cmd;
     Binding::TableEntry entry;
     chip::Callback::Callback<chip::OnDeviceConnected> connCb;
     chip::Callback::Callback<chip::OnDeviceConnectionFailure> failCb;
+    chip::SessionHolder session;
+    bool retried = false;
 
     DirectSendCtx(const BindingCommandData &d, const Binding::TableEntry &e)
         : cmd(d), entry(e),
           connCb(OnConn, this), failCb(OnFail, this) {}
+
+    chip::ScopedNodeId Peer() const {
+        return chip::ScopedNodeId(entry.nodeId, entry.fabricIndex);
+    }
+
+    template <typename CommandT>
+    CHIP_ERROR Send(chip::Messaging::ExchangeManager &em,
+                    const chip::SessionHandle &sh, const CommandT &c)
+    {
+        DirectSendCtx *self = this;
+        return chip::Controller::InvokeCommandRequest(
+            &em, sh, entry.remote, c,
+            [self](const chip::app::ConcreteCommandPath & path,
+                   const chip::app::StatusIB & /*status*/,
+                   const auto & /*response*/) {
+                ESP_LOGI(TAG, "Invoke success ep=%u cmd=0x%lx",
+                         path.mEndpointId, (unsigned long) path.mCommandId);
+                chip::Platform::Delete(self);
+            },
+            [self](CHIP_ERROR err) { self->OnInvokeFailure(err); },
+            chip::NullOptional,
+            chip::MakeOptional(chip::System::Clock::Milliseconds32(kInvokeResponseTimeoutMs)));
+    }
+
+    void OnInvokeFailure(CHIP_ERROR err)
+    {
+        const chip::ScopedNodeId peer = Peer();
+        ESP_LOGW(TAG, "Invoke failure [%u:0x%llx]: %" CHIP_ERROR_FORMAT,
+                 peer.GetFabricIndex(),
+                 (unsigned long long) peer.GetNodeId(), err.Format());
+
+        if (retried) {
+            ESP_LOGE(TAG, "DirectSend: giving up, the retry over a fresh session failed too");
+            chip::Platform::Delete(this);
+            return;
+        }
+        retried = true;
+
+        auto handle = session.Get();
+        if (handle.HasValue() && handle.Value()->IsSecureSession() &&
+            handle.Value()->AsSecureSession()->IsActiveSession()) {
+            handle.Value()->AsSecureSession()->MarkAsDefunct();
+        }
+        session.Release();
+
+        ESP_LOGW(TAG, "DirectSend: session was dead, retrying over a fresh CASE session");
+        /* Deferred: the failure can reach us from inside a session-setup
+         * callback, which must not re-enter FindOrEstablishSession. */
+        CHIP_ERROR sched = chip::DeviceLayer::PlatformMgr().ScheduleWork(
+            RetryWorker, reinterpret_cast<intptr_t>(this));
+        if (sched != CHIP_NO_ERROR) {
+            ESP_LOGE(TAG, "DirectSend: cannot schedule retry: %" CHIP_ERROR_FORMAT, sched.Format());
+            chip::Platform::Delete(this);
+        }
+    }
+
+    static void RetryWorker(intptr_t arg)
+    {
+        auto *self = reinterpret_cast<DirectSendCtx *>(arg);
+        chip::Server::GetInstance().GetCASESessionManager()->
+            FindOrEstablishSession(self->Peer(), &self->connCb, &self->failCb);
+    }
 
     static void OnConn(void *raw, chip::Messaging::ExchangeManager &em,
                        const chip::SessionHandle &sh)
@@ -354,19 +412,23 @@ struct DirectSendCtx {
         ESP_LOGI(TAG, "DirectSend: session ready -> remote ep %u cluster 0x%lx cmd 0x%lx",
                  b.remote, (unsigned long)d.clusterId, (unsigned long)d.commandId);
 
+        self->session.Grab(sh);
+
+        bool dispatched = true;
+        CHIP_ERROR err = CHIP_NO_ERROR;
+
         if (d.clusterId == OnOff::Id) {
             if (d.commandId == OnOff::Commands::Toggle::Id) {
                 OnOff::Commands::Toggle::Type c;
-                chip::Controller::InvokeCommandRequest(
-                    &em, sh, b.remote, c, make_on_success(), make_on_error());
+                err = self->Send(em, sh, c);
             } else if (d.commandId == OnOff::Commands::On::Id) {
                 OnOff::Commands::On::Type c;
-                chip::Controller::InvokeCommandRequest(
-                    &em, sh, b.remote, c, make_on_success(), make_on_error());
+                err = self->Send(em, sh, c);
             } else if (d.commandId == OnOff::Commands::Off::Id) {
                 OnOff::Commands::Off::Type c;
-                chip::Controller::InvokeCommandRequest(
-                    &em, sh, b.remote, c, make_on_success(), make_on_error());
+                err = self->Send(em, sh, c);
+            } else {
+                dispatched = false;
             }
         } else if (d.clusterId == LevelControl::Id) {
             if (d.commandId == LevelControl::Commands::MoveWithOnOff::Id) {
@@ -374,26 +436,24 @@ struct DirectSendCtx {
                 c.moveMode = (d.moveMode == 0) ? LevelControl::MoveModeEnum::kUp
                                                : LevelControl::MoveModeEnum::kDown;
                 c.rate.SetNonNull(d.rate);
-                chip::Controller::InvokeCommandRequest(
-                    &em, sh, b.remote, c, make_on_success(), make_on_error());
+                err = self->Send(em, sh, c);
             } else if (d.commandId == LevelControl::Commands::MoveToLevelWithOnOff::Id) {
                 LevelControl::Commands::MoveToLevelWithOnOff::Type c;
                 c.level = d.level;
                 c.transitionTime.SetNonNull(d.transitionTime);
-                chip::Controller::InvokeCommandRequest(
-                    &em, sh, b.remote, c, make_on_success(), make_on_error());
+                err = self->Send(em, sh, c);
             } else if (d.commandId == LevelControl::Commands::Stop::Id) {
                 LevelControl::Commands::Stop::Type c;
-                chip::Controller::InvokeCommandRequest(
-                    &em, sh, b.remote, c, make_on_success(), make_on_error());
+                err = self->Send(em, sh, c);
+            } else {
+                dispatched = false;
             }
         } else if (d.clusterId == ColorControl::Id) {
             if (d.commandId == ColorControl::Commands::MoveToColorTemperature::Id) {
                 ColorControl::Commands::MoveToColorTemperature::Type c;
                 c.colorTemperatureMireds = d.colorTempMireds;
                 c.transitionTime = 0;
-                chip::Controller::InvokeCommandRequest(
-                    &em, sh, b.remote, c, make_on_success(), make_on_error());
+                err = self->Send(em, sh, c);
             } else if (d.commandId == ColorControl::Commands::MoveColorTemperature::Id) {
                 ColorControl::Commands::MoveColorTemperature::Type c;
                 c.moveMode = (d.moveMode == 0)
@@ -402,15 +462,25 @@ struct DirectSendCtx {
                 c.rate = d.colorTempRate;
                 c.colorTemperatureMinimumMireds = 0;
                 c.colorTemperatureMaximumMireds = 0;
-                chip::Controller::InvokeCommandRequest(
-                    &em, sh, b.remote, c, make_on_success(), make_on_error());
+                err = self->Send(em, sh, c);
             } else if (d.commandId == ColorControl::Commands::StopMoveStep::Id) {
                 ColorControl::Commands::StopMoveStep::Type c;
-                chip::Controller::InvokeCommandRequest(
-                    &em, sh, b.remote, c, make_on_success(), make_on_error());
+                err = self->Send(em, sh, c);
+            } else {
+                dispatched = false;
             }
+        } else {
+            dispatched = false;
         }
-        chip::Platform::Delete(self);
+
+        if (!dispatched) {
+            ESP_LOGW(TAG, "DirectSend: unsupported cluster 0x%lx cmd 0x%lx",
+                     (unsigned long) d.clusterId, (unsigned long) d.commandId);
+            chip::Platform::Delete(self);
+        } else if (err != CHIP_NO_ERROR) {
+            /* Nothing was handed to CHIP, so no callback will ever fire. */
+            self->OnInvokeFailure(err);
+        }
     }
 
     static void OnFail(void *raw, const chip::ScopedNodeId &peer, CHIP_ERROR err)
