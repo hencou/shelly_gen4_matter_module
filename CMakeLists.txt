@@ -7,8 +7,20 @@ if(NOT DEFINED ENV{ESP_MATTER_PATH})
     message(FATAL_ERROR "Please set ESP_MATTER_PATH to the path of esp-matter repo")
 endif()
 
+# Single source of truth for the firmware version.
+#
+# PROJECT_VER      -> app descriptor -> Basic Information SoftwareVersionString
+# PROJECT_VER_NUMBER -> chip_config_software_version_number
+#                    -> Basic Information SoftwareVersion (the value a controller
+#                       and the OTA requestor actually compare against)
+#
+# Derive the number so it can never drift from the string; major*10000 +
+# minor*100 + patch stays monotonic once a minor or patch reaches two digits.
 set(PROJECT_VER "1.6.1")
-set(PROJECT_VER_NUMBER 160)
+if(NOT PROJECT_VER MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$")
+    message(FATAL_ERROR "PROJECT_VER '${PROJECT_VER}' must be major.minor.patch")
+endif()
+math(EXPR PROJECT_VER_NUMBER "${CMAKE_MATCH_1} * 10000 + ${CMAKE_MATCH_2} * 100 + ${CMAKE_MATCH_3}")
 
 set(ESP_MATTER_PATH $ENV{ESP_MATTER_PATH})
 set(MATTER_SDK_PATH ${ESP_MATTER_PATH}/connectedhomeip/connectedhomeip)
@@ -20,6 +32,25 @@ set(EXTRA_COMPONENT_DIRS
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(shelly_gen4_matter_module)
+
+# The OTA image is built from these headers (tools/make-matter-ota.py), so a
+# stale value there makes a controller offer an update for the firmware it is
+# already running. Fail the build instead.
+file(READ ${CMAKE_SOURCE_DIR}/main/CHIPProjectConfig.h CHIP_PROJECT_CONFIG_CONTENTS)
+if(NOT CHIP_PROJECT_CONFIG_CONTENTS MATCHES
+        "CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION ${PROJECT_VER_NUMBER}\n")
+    message(FATAL_ERROR "main/CHIPProjectConfig.h: CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION "
+                        "must be ${PROJECT_VER_NUMBER} for PROJECT_VER ${PROJECT_VER}")
+endif()
+if(NOT CHIP_PROJECT_CONFIG_CONTENTS MATCHES
+        "CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING \"${PROJECT_VER}\"")
+    message(FATAL_ERROR "main/CHIPProjectConfig.h: CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "
+                        "must be \"${PROJECT_VER}\"")
+endif()
+file(READ ${CMAKE_SOURCE_DIR}/main/app_config.h APP_CONFIG_CONTENTS)
+if(NOT APP_CONFIG_CONTENTS MATCHES "FW_VERSION \"${PROJECT_VER}\"")
+    message(FATAL_ERROR "main/app_config.h: FW_VERSION must be \"${PROJECT_VER}\"")
+endif()
 
 # CHIP_HAVE_CONFIG_H is cruciaal — anders mist platform target selectie
 # (ChipDevicePlatformEvent typedef, ConnectivityManagerImpl static_cast).
