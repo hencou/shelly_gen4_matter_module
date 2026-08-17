@@ -47,10 +47,6 @@ if(NOT CHIP_PROJECT_CONFIG_CONTENTS MATCHES
     message(FATAL_ERROR "main/CHIPProjectConfig.h: CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "
                         "must be \"${PROJECT_VER}\"")
 endif()
-file(READ ${CMAKE_SOURCE_DIR}/main/app_config.h APP_CONFIG_CONTENTS)
-if(NOT APP_CONFIG_CONTENTS MATCHES "FW_VERSION \"${PROJECT_VER}\"")
-    message(FATAL_ERROR "main/app_config.h: FW_VERSION must be \"${PROJECT_VER}\"")
-endif()
 
 # CHIP_HAVE_CONFIG_H is cruciaal — anders mist platform target selectie
 # (ChipDevicePlatformEvent typedef, ConnectivityManagerImpl static_cast).

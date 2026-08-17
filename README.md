@@ -257,13 +257,12 @@ python3 tools/make-matter-ota.py      # → shelly-gen4-matter-module-v<version>
 
 The image embeds the vendor/product ID and software version; the device only accepts an image with a higher software version than it currently runs.
 
-For each release bump the version in **three** places — the build fails if they disagree:
+For each release bump the version in **two** places — the build fails if they disagree:
 
 | Where | Value | Reported as |
 |---|---|---|
-| `PROJECT_VER` in `CMakeLists.txt` | `1.6.1` | `SoftwareVersionString`; `PROJECT_VER_NUMBER` (`major*10000 + minor*100 + patch`) is derived from it and reported as `SoftwareVersion` |
+| `PROJECT_VER` in `CMakeLists.txt` | `1.6.1` | `SoftwareVersionString` and the version on the management dashboard; `PROJECT_VER_NUMBER` (`major*10000 + minor*100 + patch`) is derived from it and reported as `SoftwareVersion` |
 | `main/CHIPProjectConfig.h` | `10601` / `"1.6.1"` | the version the `.ota` image is tagged with |
-| `FW_VERSION` in `main/app_config.h` | `"1.6.1"` | version on the management dashboard |
 
 Both numbers must match: a controller compares `SoftwareVersion` (a number), not the string. If the `.ota` advertises a number the running firmware does not report, Home Assistant shows a permanent "update available" for the firmware it already runs — displayed as `1.6.1 (10601)` next to installed version `1.6.1`.
 

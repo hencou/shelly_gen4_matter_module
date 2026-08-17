@@ -83,7 +83,8 @@ static esp_err_t api_settings_get(httpd_req_t *req)
     static char json[512];
     snprintf(json, sizeof(json),
         "{\"ssid\":\"%s\",\"pass\":\"%s\",\"url\":\"%s\",\"hostname\":\"%s\",\"version\":\"%s\"}",
-        ssid, pass, url, ota_hostname_get(), FW_VERSION);
+        ssid, pass, url, ota_hostname_get(),
+        esp_app_get_description()->version);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
 }
@@ -242,7 +243,7 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
     }
 
     pos = snprintf(json, sizeof(json),
-        "{\"firmware\":\"%s %s (%s %s)\","
+        "{\"firmware\":\"%s (%s %s)\","
         "\"device_type\":\"%s\","
         "\"device_type_id\":%d,"
         "\"chip\":\"ESP32-C6 rev %d, %d core(s)\","
@@ -263,7 +264,7 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
         "\"analog_in\":\"%s\","
         "\"temperature\":\"%s\","
         "\"power\":\"%s\"}",
-        FW_VERSION, app->version, app->date, app->time,
+        app->version, app->date, app->time,
         hw->name, (int)hw->type,
         ci.revision, ci.cores,
         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
