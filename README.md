@@ -20,7 +20,7 @@
 
 - **Dynamic Matter endpoints** — no hard-coded endpoints. Configure via the web management dashboard
 - **Lua 5.4 scripting** — write custom button/relay/sensor logic per endpoint slot (up to 8 slots)
-- **Matter 1.5** compatible — works with Home Assistant, Google Home, Apple Home
+- **Matter 1.6** compatible — works with Home Assistant, Google Home, Apple Home
 - **Thread + WiFi** — Thread for Matter communication, WiFi for management/OTA
 - **Smart boot** — auto-detects factory reset vs configured vs commissioned state
 - **WiFi management dashboard** — configure scripts, WiFi, endpoints, backup/restore
@@ -40,7 +40,7 @@ Each script slot can be configured as one of these Matter endpoint types:
 
 ## Based on
 
-- [esp-matter](https://github.com/espressif/esp-matter) `release/v1.5` (**Matter 1.5.1**)
+- [esp-matter](https://github.com/espressif/esp-matter) `release/v1.6` (**Matter 1.6**)
 - [connectedhomeip](https://github.com/project-chip/connectedhomeip) (as submodule within esp-matter)
 - ESP-IDF v5.5.5
 - Lua 5.4 (compiled as component)
