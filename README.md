@@ -40,7 +40,7 @@ Each script slot can be configured as one of these Matter endpoint types:
 
 ## Based on
 
-- [esp-matter](https://github.com/espressif/esp-matter) `release/v1.5` (**Matter 1.5.1**)
+- [esp-matter](https://github.com/espressif/esp-matter) `release/v1.6` (**Matter 1.6.0**)
 - [connectedhomeip](https://github.com/project-chip/connectedhomeip) (as submodule within esp-matter)
 - ESP-IDF v5.5.5
 - Lua 5.4 (compiled as component)
@@ -261,10 +261,10 @@ For each release bump the version in **two** places — the build fails if they 
 
 | Where | Value | Reported as |
 |---|---|---|
-| `PROJECT_VER` in `CMakeLists.txt` | `1.6.1` | `SoftwareVersionString` and the version on the management dashboard; `PROJECT_VER_NUMBER` (`major*10000 + minor*100 + patch`) is derived from it and reported as `SoftwareVersion` |
-| `main/CHIPProjectConfig.h` | `10601` / `"1.6.1"` | the version the `.ota` image is tagged with |
+| `PROJECT_VER` in `CMakeLists.txt` | `1.6.2` | `SoftwareVersionString` and the version on the management dashboard; `PROJECT_VER_NUMBER` (`major*10000 + minor*100 + patch`) is derived from it and reported as `SoftwareVersion` |
+| `main/CHIPProjectConfig.h` | `10602` / `"1.6.2"` | the version the `.ota` image is tagged with |
 
-Both numbers must match: a controller compares `SoftwareVersion` (a number), not the string. If the `.ota` advertises a number the running firmware does not report, Home Assistant shows a permanent "update available" for the firmware it already runs — displayed as `1.6.1 (10601)` next to installed version `1.6.1`.
+Both numbers must match: a controller compares `SoftwareVersion` (a number), not the string. If the `.ota` advertises a number the running firmware does not report, Home Assistant shows a permanent "update available" for the firmware it already runs — displayed as `1.6.2 (10602)` next to installed version `1.6.2`.
 
 > Tip: `make-matter-ota.py` just wraps whatever is in `build/`. Always `idf.py build` first (use `idf.py fullclean` to force a genuine recompile) and confirm the `.ota` is fresh — a stale `build/` produces a stale `.ota`.
 

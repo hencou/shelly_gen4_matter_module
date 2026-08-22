@@ -9,6 +9,16 @@
 
 ## 1. ESP-IDF v5.5.5
 
+esp-matter `release/v1.6` needs **Python 3.11 or newer**: its pinned
+`mobly==1.13` is published as `requires-python: >=3.11`, so on Ubuntu 22.04
+(Python 3.10) the bootstrap fails with a dependency conflict. Install it first
+and point the pigweed bootstrap at it:
+
+```bash
+sudo apt-get install -y python3.11 python3.11-venv python3.11-dev
+export PW_BOOTSTRAP_PYTHON=/usr/bin/python3.11
+```
+
 ```bash
 mkdir -p ~/esp && cd ~/esp
 git clone --recursive -b v5.5.5 https://github.com/espressif/esp-idf.git
@@ -21,8 +31,8 @@ cd esp-idf
 
 ```bash
 cd ~/esp
-# release/v1.5 is Matter 1.5.1 and expects ESP-IDF v5.5.5
-git clone --depth 1 -b release/v1.5 https://github.com/espressif/esp-matter.git
+# release/v1.6 is Matter 1.6.0 and expects ESP-IDF v5.5.5
+git clone --depth 1 -b release/v1.6 https://github.com/espressif/esp-matter.git
 cd esp-matter
 git submodule update --init --depth 1
 
@@ -35,10 +45,18 @@ cd ~/esp/esp-matter
 . ./export.sh           # sets $ESP_MATTER_PATH + adds chip-tool to PATH
 ```
 
-⚠️ If `install.sh` fails with `mobly` / `ResolutionImpossible`:
+⚠️ If `install.sh` fails with `mobly` / `ResolutionImpossible`, the bootstrap
+picked up a Python older than 3.11. Set `PW_BOOTSTRAP_PYTHON` (see step 1) and
+rebuild the environment from scratch:
 ```bash
 rm -rf connectedhomeip/connectedhomeip/.environment
-./install.sh
+PW_BOOTSTRAP_PYTHON=/usr/bin/python3.11 ./install.sh
+```
+
+The host tools built by `install.sh` also need a few system libraries:
+```bash
+sudo apt-get install -y pkg-config libssl-dev libglib2.0-dev \
+    libavahi-client-dev libreadline-dev libevent-dev
 ```
 
 ⚠️ The `connectedhomeip/` submodule alone is ~2 GB. Make sure you have enough free space (>5 GB for build artifacts).

@@ -16,7 +16,7 @@ endif()
 #
 # Derive the number so it can never drift from the string; major*10000 +
 # minor*100 + patch stays monotonic once a minor or patch reaches two digits.
-set(PROJECT_VER "1.6.1")
+set(PROJECT_VER "1.6.2")
 if(NOT PROJECT_VER MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$")
     message(FATAL_ERROR "PROJECT_VER '${PROJECT_VER}' must be major.minor.patch")
 endif()

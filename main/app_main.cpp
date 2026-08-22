@@ -200,7 +200,12 @@ extern "C" void app_main(void)
         /* Not in a fabric yet. Start the same services the moment commissioning
          * completes, so the dashboard is reachable over Thread without the user
          * having to reboot the device first. */
-        chip::DeviceLayer::PlatformMgr().AddEventHandler(on_commissioning_complete, 0);
+        CHIP_ERROR cerr =
+            chip::DeviceLayer::PlatformMgr().AddEventHandler(on_commissioning_complete, 0);
+        if (cerr != CHIP_NO_ERROR) {
+            ESP_LOGE(TAG, "commissioning handler not registered: %" CHIP_ERROR_FORMAT,
+                     cerr.Format());
+        }
         ESP_LOGI(TAG, "BOOT-STEP: awaiting commissioning to start Thread services");
     }
 
@@ -315,7 +320,11 @@ extern "C" void app_main(void)
             ESP_LOGI(TAG, "Not commissioned, commission mode pending — BLE commissioning mode");
         } else if (!has_slots) {
             ESP_LOGI(TAG, "Not commissioned, no scripts — WiFi setup mode (BLE off)");
-            chip::DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(false);
+            CHIP_ERROR cerr =
+                chip::DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(false);
+            if (cerr != CHIP_NO_ERROR) {
+                ESP_LOGE(TAG, "cannot stop BLE advertising: %" CHIP_ERROR_FORMAT, cerr.Format());
+            }
             ota_enable_wifi_runtime();
         } else {
             ESP_LOGI(TAG, "Not commissioned, scripts configured — BLE commissioning mode");

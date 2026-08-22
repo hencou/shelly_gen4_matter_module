@@ -86,9 +86,15 @@ sudo apt update && sudo apt upgrade -y
 
 sudo apt install -y git wget curl flex bison gperf \
     python3 python3-pip python3-venv python3-setuptools \
+    python3.11 python3.11-venv python3.11-dev \
     cmake ninja-build ccache libffi-dev libssl-dev \
-    dfu-util libusb-1.0-0 libglib2.0-dev
+    dfu-util libusb-1.0-0 libglib2.0-dev libavahi-client-dev \
+    libreadline-dev libevent-dev pkg-config
 ```
+
+Ubuntu 22.04 ships Python 3.10, but esp-matter `release/v1.6` pins
+`mobly==1.13`, which is published as `requires-python: >=3.11`. Hence the
+explicit `python3.11` above; step 5 points the bootstrap at it.
 
 Add yourself to the `dialout` group for access to `/dev/ttyUSB*`:
 ```bash
@@ -123,13 +129,13 @@ Duration: 10-15 minutes.
 
 ## 5. Install ESP-Matter
 
-ESP-Matter has many submodules via `connectedhomeip`. We use a **stable release branch** (avoids the known `mobly` dependency conflict on `main`).
+ESP-Matter has many submodules via `connectedhomeip`. We use a **stable release branch**; `main` is the ongoing effort towards the next Matter version.
 
 ```bash
 cd ~/esp
 source esp-idf/export.sh
 
-git clone --depth 1 -b release/v1.5 https://github.com/espressif/esp-matter.git
+git clone --depth 1 -b release/v1.6 https://github.com/espressif/esp-matter.git
 cd esp-matter
 git submodule update --init --depth 1
 ```
@@ -154,15 +160,15 @@ cd ~/esp/esp-matter
 
 ### If install.sh fails with `mobly` / `ResolutionImpossible`
 
-Known issue. Fix:
+The bootstrap used Python 3.10. Point it at 3.11 and rebuild the environment:
 ```bash
 cd ~/esp/esp-matter/connectedhomeip/connectedhomeip
 rm -rf .environment
 cd ~/esp/esp-matter
-./install.sh
+PW_BOOTSTRAP_PYTHON=/usr/bin/python3.11 ./install.sh
 ```
 
-This cleans up the half-populated Python venv and retries — usually works directly.
+This discards the half-populated Python venv and bootstraps a new one on 3.11.
 
 ---
 
@@ -400,7 +406,7 @@ idf.py -p /dev/ttyUSB0 flash monitor
 | `wsl: command not found` / WSL not installed | WSL feature off | `wsl --install -d Ubuntu-22.04` as admin, reboot |
 | WSL error `0x80370102` | Virtualization off in BIOS | BIOS → enable VT-x / AMD-V |
 | `WSL State: Stopped` | Normal after reboot | `wsl` or start menu Ubuntu |
-| `install.sh` fails on `mobly` / `ResolutionImpossible` | Pip dependency conflict in pigweed | `rm -rf connectedhomeip/connectedhomeip/.environment && ./install.sh` |
+| `install.sh` fails on `mobly` / `ResolutionImpossible` | Pigweed bootstrapped on Python 3.10; `mobly==1.13` needs 3.11+ | `rm -rf connectedhomeip/connectedhomeip/.environment && PW_BOOTSTRAP_PYTHON=/usr/bin/python3.11 ./install.sh` |
 | `idf.py: command not found` | Env not sourced | `source ~/esp/esp-idf/export.sh` (or add to `~/.bashrc`) |
 | `permission denied` on `/dev/ttyUSB0` | User not in dialout group | `sudo usermod -aG dialout $USER` + reopen terminal |
 | USB port not visible in WSL | Forgot `usbipd attach` after reboot | PowerShell admin: `usbipd attach --wsl --busid <ID>` |
