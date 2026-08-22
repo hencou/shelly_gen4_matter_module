@@ -31,7 +31,7 @@ cd esp-idf
 
 ```bash
 cd ~/esp
-# release/v1.6 is Matter 1.6.0 and expects ESP-IDF v5.5.5
+# release/v1.6 is Matter 1.6 and expects ESP-IDF v5.5.5
 git clone --depth 1 -b release/v1.6 https://github.com/espressif/esp-matter.git
 cd esp-matter
 git submodule update --init --depth 1
