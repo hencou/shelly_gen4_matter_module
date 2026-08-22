@@ -544,6 +544,18 @@ static void SwitchWorkerFunction(intptr_t context)
     chip::Platform::Delete(d);
 }
 
+/* Hands the command to the Matter task. Owns d: on failure it is released here,
+ * otherwise SwitchWorkerFunction releases it. */
+static void schedule_switch_work(BindingCommandData *d)
+{
+    CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().ScheduleWork(
+        SwitchWorkerFunction, reinterpret_cast<intptr_t>(d));
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "switch_send: cannot schedule work: %" CHIP_ERROR_FORMAT, err.Format());
+        chip::Platform::Delete(d);
+    }
+}
+
 static void switch_send(uint16_t local_ep, chip::ClusterId cluster, chip::CommandId cmd,
                         uint8_t move_mode = 0, uint8_t rate = 50)
 {
@@ -555,8 +567,7 @@ static void switch_send(uint16_t local_ep, chip::ClusterId cluster, chip::Comman
     d->commandId       = cmd;
     d->moveMode        = move_mode;
     d->rate            = rate;
-    chip::DeviceLayer::PlatformMgr().ScheduleWork(
-        SwitchWorkerFunction, reinterpret_cast<intptr_t>(d));
+    schedule_switch_work(d);
 }
 
 /* ---------------- Public API (C-callable) ---------------- */
@@ -610,8 +621,7 @@ extern "C" void matter_send_level_move_to_level(uint16_t ep, uint8_t level, uint
     d->commandId       = LevelControl::Commands::MoveToLevelWithOnOff::Id;
     d->level           = level;
     d->transitionTime  = transition_ds;
-    chip::DeviceLayer::PlatformMgr().ScheduleWork(
-        SwitchWorkerFunction, reinterpret_cast<intptr_t>(d));
+    schedule_switch_work(d);
 }
 
 extern "C" void matter_send_color_temp_set(uint16_t ep, uint16_t mireds)
@@ -623,8 +633,7 @@ extern "C" void matter_send_color_temp_set(uint16_t ep, uint16_t mireds)
     d->clusterId       = ColorControl::Id;
     d->commandId       = ColorControl::Commands::MoveToColorTemperature::Id;
     d->colorTempMireds = mireds;
-    chip::DeviceLayer::PlatformMgr().ScheduleWork(
-        SwitchWorkerFunction, reinterpret_cast<intptr_t>(d));
+    schedule_switch_work(d);
 }
 
 extern "C" void matter_send_color_temp_move(uint16_t ep, bool warmer, uint16_t rate)
@@ -637,8 +646,7 @@ extern "C" void matter_send_color_temp_move(uint16_t ep, bool warmer, uint16_t r
     d->commandId       = ColorControl::Commands::MoveColorTemperature::Id;
     d->moveMode        = warmer ? 0 : 1;  /* 0=Up(warmer/higher mireds), 1=Down(cooler) */
     d->colorTempRate   = rate;
-    chip::DeviceLayer::PlatformMgr().ScheduleWork(
-        SwitchWorkerFunction, reinterpret_cast<intptr_t>(d));
+    schedule_switch_work(d);
 }
 
 extern "C" void matter_send_color_temp_stop(uint16_t ep)
@@ -649,8 +657,7 @@ extern "C" void matter_send_color_temp_stop(uint16_t ep)
     d->localEndpointId = ep;
     d->clusterId       = ColorControl::Id;
     d->commandId       = ColorControl::Commands::StopMoveStep::Id;
-    chip::DeviceLayer::PlatformMgr().ScheduleWork(
-        SwitchWorkerFunction, reinterpret_cast<intptr_t>(d));
+    schedule_switch_work(d);
 }
 
 
@@ -793,7 +800,10 @@ extern "C" void matter_disable_thread(void)
 {
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     ESP_LOGW(TAG, "Disabling Thread to free 2.4 GHz radio for WiFi");
-    chip::DeviceLayer::ThreadStackMgr().SetThreadEnabled(false);
+    CHIP_ERROR err = chip::DeviceLayer::ThreadStackMgr().SetThreadEnabled(false);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "SetThreadEnabled(false): %" CHIP_ERROR_FORMAT, err.Format());
+    }
 #endif
 }
 
@@ -838,8 +848,13 @@ static void thread_watchdog_cb(void *)
     if (s_twdg_detached_ticks == TWDG_SOFT_TICKS) {
         ESP_LOGW(TAG, "Thread detached ~%d s — toggling interface to force re-attach",
                  (int)(TWDG_SOFT_TICKS * 30));
-        chip::DeviceLayer::ThreadStackMgr().SetThreadEnabled(false);
-        chip::DeviceLayer::ThreadStackMgr().SetThreadEnabled(true);
+        CHIP_ERROR err = chip::DeviceLayer::ThreadStackMgr().SetThreadEnabled(false);
+        if (err == CHIP_NO_ERROR) {
+            err = chip::DeviceLayer::ThreadStackMgr().SetThreadEnabled(true);
+        }
+        if (err != CHIP_NO_ERROR) {
+            ESP_LOGE(TAG, "Thread interface toggle failed: %" CHIP_ERROR_FORMAT, err.Format());
+        }
     } else if (s_twdg_detached_ticks >= TWDG_HARD_TICKS) {
         ESP_LOGE(TAG, "Thread still detached ~%d s — rebooting to recover",
                  (int)(TWDG_HARD_TICKS * 30));
@@ -1520,7 +1535,10 @@ extern "C" esp_err_t matter_start(const script_slot_type_t *slot_types, uint8_t 
      * loader's SH0S boot-select. Once the image is applied (but before the
      * requestor reboots) mirror the new slot back into a valid SH0S so the
      * stock loader actually boots the freshly downloaded image. */
-    chip::DeviceLayer::PlatformMgr().AddEventHandler(shelly_ota_apply_handler, 0);
+    CHIP_ERROR cerr = chip::DeviceLayer::PlatformMgr().AddEventHandler(shelly_ota_apply_handler, 0);
+    if (cerr != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "OTA apply handler not registered: %" CHIP_ERROR_FORMAT, cerr.Format());
+    }
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     esp_openthread_platform_config_t ot_cfg = {
@@ -1537,7 +1555,10 @@ extern "C" esp_err_t matter_start(const script_slot_type_t *slot_types, uint8_t 
 
     /* Force-init BindingManager so binding table loads from NVS immediately,
      * regardless of DNS-SD / network state.  Must run on CHIP thread. */
-    chip::DeviceLayer::PlatformMgr().ScheduleWork(force_binding_manager_init, 0);
+    cerr = chip::DeviceLayer::PlatformMgr().ScheduleWork(force_binding_manager_init, 0);
+    if (cerr != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "BindingManager init not scheduled: %" CHIP_ERROR_FORMAT, cerr.Format());
+    }
 
     return ESP_OK;
 }
