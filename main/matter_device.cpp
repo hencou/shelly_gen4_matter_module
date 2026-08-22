@@ -323,9 +323,21 @@ static void send_colorcontrol_multicast(const BindingCommandData &d, const Bindi
  * without either side noticing (peer rebooted, changed its IPv6 address, or the
  * route went away). MRP only concludes that after five retransmissions, ~35 s,
  * by which time the command is long irrelevant for a wall switch. So the invoke
- * carries a short response timeout, and on timeout the session is marked
- * defunct — which excludes it from the next lookup — and the command is sent
- * once more over a freshly established session.
+ * carries a short response timeout and the command is sent once more over a
+ * freshly established session.
+ *
+ * Resending is only safe when the peer never got the first attempt: Toggle is
+ * not idempotent, and a duplicate reaching the lamp shows up as "switches on
+ * and immediately off again". Two things guard against that:
+ *
+ *   - the peer must not have acknowledged the first attempt. Every received
+ *     message, including a bare MRP ack, bumps the session's peer-activity
+ *     timestamp, so a timestamp newer than our send means the command did
+ *     arrive and only its response was lost.
+ *   - the dead session is evicted instead of marked defunct. Defunct leaves the
+ *     original message in the MRP retransmit table and flips back to active as
+ *     soon as the peer reappears, so the first attempt still gets delivered
+ *     alongside the retry. Eviction aborts the exchange and clears that table.
  */
 static constexpr uint32_t kInvokeResponseTimeoutMs = 5000;
 
@@ -335,6 +347,8 @@ struct DirectSendCtx {
     chip::Callback::Callback<chip::OnDeviceConnected> connCb;
     chip::Callback::Callback<chip::OnDeviceConnectionFailure> failCb;
     chip::SessionHolder session;
+    /* Peer activity seen when the command went out; zero if nothing was sent. */
+    chip::System::Clock::Timestamp peerActivityAtSend = chip::System::Clock::kZero;
     bool retried = false;
 
     DirectSendCtx(const BindingCommandData &d, const Binding::TableEntry &e)
@@ -345,11 +359,20 @@ struct DirectSendCtx {
         return chip::ScopedNodeId(entry.nodeId, entry.fabricIndex);
     }
 
+    chip::System::Clock::Timestamp PeerActivity() const {
+        auto handle = session.Get();
+        if (handle.HasValue() && handle.Value()->IsSecureSession()) {
+            return handle.Value()->AsSecureSession()->GetLastPeerActivityTime();
+        }
+        return chip::System::Clock::kZero;
+    }
+
     template <typename CommandT>
     CHIP_ERROR Send(chip::Messaging::ExchangeManager &em,
                     const chip::SessionHandle &sh, const CommandT &c)
     {
         DirectSendCtx *self = this;
+        peerActivityAtSend  = PeerActivity();
         return chip::Controller::InvokeCommandRequest(
             &em, sh, entry.remote, c,
             [self](const chip::app::ConcreteCommandPath & path,
@@ -376,16 +399,32 @@ struct DirectSendCtx {
             chip::Platform::Delete(this);
             return;
         }
+
+        /* Held for as long as the raw pointer below is used. */
+        auto handle = session.Get();
+        chip::Transport::SecureSession *secure = nullptr;
+        if (handle.HasValue() && handle.Value()->IsSecureSession()) {
+            secure = handle.Value()->AsSecureSession();
+        }
+
+        if (peerActivityAtSend != chip::System::Clock::kZero && secure != nullptr &&
+            secure->GetLastPeerActivityTime() > peerActivityAtSend) {
+            ESP_LOGW(TAG, "DirectSend: peer acked the command but never answered, "
+                          "not resending to avoid a duplicate");
+            chip::Platform::Delete(this);
+            return;
+        }
         retried = true;
 
-        auto handle = session.Get();
-        if (handle.HasValue() && handle.Value()->IsSecureSession() &&
-            handle.Value()->AsSecureSession()->IsActiveSession()) {
-            handle.Value()->AsSecureSession()->MarkAsDefunct();
+        if (secure != nullptr) {
+            /* Evict, do not just mark defunct: eviction aborts the exchange and
+             * clears the MRP retransmit table, so the timed-out attempt can no
+             * longer reach the peer next to the retry. */
+            secure->MarkForEviction();
         }
         session.Release();
 
-        ESP_LOGW(TAG, "DirectSend: session was dead, retrying over a fresh CASE session");
+        ESP_LOGW(TAG, "DirectSend: session was dead, aborted the attempt and retrying over a fresh CASE session");
         /* Deferred: the failure can reach us from inside a session-setup
          * callback, which must not re-enter FindOrEstablishSession. */
         CHIP_ERROR sched = chip::DeviceLayer::PlatformMgr().ScheduleWork(
@@ -478,7 +517,9 @@ struct DirectSendCtx {
                      (unsigned long) d.clusterId, (unsigned long) d.commandId);
             chip::Platform::Delete(self);
         } else if (err != CHIP_NO_ERROR) {
-            /* Nothing was handed to CHIP, so no callback will ever fire. */
+            /* Nothing was handed to CHIP, so no callback will ever fire and
+             * nothing reached the peer either. */
+            self->peerActivityAtSend = chip::System::Clock::kZero;
             self->OnInvokeFailure(err);
         }
     }
