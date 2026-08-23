@@ -108,6 +108,13 @@ void matter_delete_all_fabrics(void);
  * string. Returns the number of entries found. */
 int matter_binding_dump(char *buf, size_t buf_len);
 
+/* Reachability keepalive for unicast bindings. Periodically reads one cheap
+ * attribute from every bound peer, so a session whose cached IPv6 address went
+ * stale is thrown away in the background instead of costing the next button
+ * press an invoke timeout. Interval in seconds, 0 disables it. */
+uint32_t matter_keepalive_interval_get(void);
+esp_err_t matter_keepalive_interval_set(uint32_t seconds);
+
 #ifdef __cplusplus
 }
 #endif

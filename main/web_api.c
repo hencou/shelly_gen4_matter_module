@@ -256,6 +256,7 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
         "\"reset_reason\":\"%s\","
         "\"bench_mode\":\"%s\","
         "\"srp_mode\":\"%s\","
+        "\"keepalive_s\":%lu,"
         "\"pushbutton\":\"%s (GPIO%d=%d)\","
         "\"pcb_button\":\"%s (GPIO%d=%d)\","
         "\"switch2\":\"%s\","
@@ -276,6 +277,7 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
         rst,
         g_bench_mode ? "ON" : "OFF",
         ota_srp_mode_get() ? "ON" : "OFF",
+        (unsigned long)matter_keepalive_interval_get(),
         btn_active ? "PRESSED" : "RELEASED", hw->switch_gpio, btn_level,
         pcb_active ? "PRESSED" : "RELEASED", hw->button_gpio, pcb_level,
         switch2_str,
@@ -297,6 +299,44 @@ static esp_err_t api_bench_mode_post(httpd_req_t *req)
     vTaskDelay(pdMS_TO_TICKS(500));
     esp_restart();
     return ESP_OK;
+}
+
+/* Binding keepalive interval in seconds; 0 disables the probing. */
+static esp_err_t api_keepalive_post(httpd_req_t *req)
+{
+    char body[64] = { 0 };
+    int len = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (len <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body");
+        return ESP_FAIL;
+    }
+    body[len] = '\0';
+
+    cJSON *root = cJSON_Parse(body);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
+        return ESP_FAIL;
+    }
+    cJSON *sec = cJSON_GetObjectItem(root, "seconds");
+    if (!cJSON_IsNumber(sec)) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing seconds");
+        return ESP_FAIL;
+    }
+    double v = sec->valuedouble;
+    cJSON_Delete(root);
+
+    /* Below a minute the radio traffic outweighs the benefit. */
+    if (v != 0 && (v < 60 || v > 86400)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "seconds must be 0 or 60..86400");
+        return ESP_FAIL;
+    }
+
+    if (matter_keepalive_interval_set((uint32_t)v) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "save failed");
+        return ESP_FAIL;
+    }
+    return httpd_resp_sendstr(req, "OK");
 }
 
 static esp_err_t api_srp_mode_post(httpd_req_t *req)
@@ -1130,6 +1170,7 @@ void web_api_start_httpd(void)
     httpd_uri_t get_stock_fw      = { "/api/stock-fw",      HTTP_GET,    stock_fw_info_get,     NULL };
     httpd_uri_t get_log           = { "/api/log",           HTTP_GET,    api_log_get,           NULL };
     httpd_uri_t get_owprobe       = { "/api/owprobe",       HTTP_GET,    api_owprobe_get,       NULL };
+    httpd_uri_t post_keepalive    = { "/api/keepalive",     HTTP_POST,   api_keepalive_post,    NULL };
 
     httpd_register_uri_handler(srv, &get_root);
     httpd_register_uri_handler(srv, &post_upload);
@@ -1154,6 +1195,7 @@ void web_api_start_httpd(void)
     httpd_register_uri_handler(srv, &get_stock_fw);
     httpd_register_uri_handler(srv, &get_log);
     httpd_register_uri_handler(srv, &get_owprobe);
+    httpd_register_uri_handler(srv, &post_keepalive);
 
     s_srv = srv;
 }
