@@ -261,10 +261,10 @@ For each release bump the version in **two** places — the build fails if they 
 
 | Where | Value | Reported as |
 |---|---|---|
-| `PROJECT_VER` in `CMakeLists.txt` | `1.6.2` | `SoftwareVersionString` and the version on the management dashboard; `PROJECT_VER_NUMBER` (`major*10000 + minor*100 + patch`) is derived from it and reported as `SoftwareVersion` |
-| `main/CHIPProjectConfig.h` | `10602` / `"1.6.2"` | the version the `.ota` image is tagged with |
+| `PROJECT_VER` in `CMakeLists.txt` | `1.6.3` | `SoftwareVersionString` and the version on the management dashboard; `PROJECT_VER_NUMBER` (`major*10000 + minor*100 + patch`) is derived from it and reported as `SoftwareVersion` |
+| `main/CHIPProjectConfig.h` | `10603` / `"1.6.3"` | the version the `.ota` image is tagged with |
 
-Both numbers must match: a controller compares `SoftwareVersion` (a number), not the string. If the `.ota` advertises a number the running firmware does not report, Home Assistant shows a permanent "update available" for the firmware it already runs — displayed as `1.6.2 (10602)` next to installed version `1.6.2`.
+Both numbers must match: a controller compares `SoftwareVersion` (a number), not the string. If the `.ota` advertises a number the running firmware does not report, Home Assistant shows a permanent "update available" for the firmware it already runs — displayed as `1.6.3 (10603)` next to installed version `1.6.3`.
 
 > Tip: `make-matter-ota.py` just wraps whatever is in `build/`. Always `idf.py build` first (use `idf.py fullclean` to force a genuine recompile) and confirm the `.ota` is fresh — a stale `build/` produces a stale `.ota`.
 
@@ -436,6 +436,35 @@ The onboard status LED (GPIO15) indicates the device state:
 | **Off** | LED disabled or no pattern set |
 
 During boot the LED blinks fast. After initialization it switches to heartbeat (if commissioned) or slow blink (if not yet commissioned).
+
+## Unicast binding reachability
+
+A unicast binding sends over a cached CASE session, and that session holds the
+IPv6 address the peer had when the session was created. Thread addresses are not
+stable — a border router restart hands out a new on-mesh prefix, and a parent
+change gives a node a new RLOC — so the address can go stale while the session
+still looks healthy. Sending then goes nowhere and MRP retries for ~35 s.
+
+Three mechanisms keep that off the critical path:
+
+| Mechanism | What it does |
+|---|---|
+| Invoke response timeout (1.5 s) | Fixed, in firmware. After a timeout the session is evicted and the command is retried once over a fresh CASE session — which does a new DNS-SD lookup. Skipped when the peer acknowledged the first attempt, because `Toggle` is not idempotent. |
+| Thread network-data watch | Automatic. When the set of on-mesh prefixes changes, every cached session to a bound peer is evicted right away, because all peer addresses just expired. |
+| Binding keepalive | Configurable. Reads `ClusterRevision` from each bound peer's bound cluster every N seconds and drops the session when that read fails, so the failure is discovered in the background instead of on a button press. |
+
+The keepalive interval is set on the Hardware tab or over HTTP; `0` disables it,
+the minimum is 60 s. Default is 600 s.
+
+```
+curl -X POST http://<ip>/api/keepalive -H 'Content-Type: application/json' -d '{"seconds":600}'
+```
+
+Cost is one round trip of ~100–150 bytes per bound peer per interval, and the
+`ReadClient` is released once the answer arrives — no subscription is kept, on
+either side. A read is used rather than a subscription on purpose: a Matter
+device only has to support three subscriptions per fabric, and the controller
+needs those itself.
 
 ## BENCH_MODE
 

@@ -33,6 +33,7 @@ extern "C" {
 #include "esp_timer.h"
 #include "esp_system.h"
 #include "esp_random.h"
+#include "nvs.h"
 }
 
 #include <cmath>
@@ -50,6 +51,7 @@ extern "C" {
 #include <app-common/zap-generated/cluster-objects.h>
 #include <app-common/zap-generated/attributes/Accessors.h>
 #include <controller/InvokeInteraction.h>
+#include <controller/ReadInteraction.h>
 #include <credentials/FabricTable.h>
 #include <credentials/GroupDataProvider.h>
 #include <transport/SessionHolder.h>
@@ -66,12 +68,12 @@ extern "C" {
 #include <openthread/instance.h>
 #include <openthread/thread.h>
 #include <openthread/ip6.h>
+#include <openthread/netdata.h>
 #if CONFIG_OPENTHREAD_SRP_CLIENT
 #include <openthread/srp_client.h>
 #endif
 #if CONFIG_OPENTHREAD_BORDER_ROUTER
 #include <openthread/srp_server.h>
-#include <openthread/netdata.h>
 #endif
 
 /* Default config macros are NOT provided by esp_openthread.h in esp-matter/
@@ -338,8 +340,14 @@ static void send_colorcontrol_multicast(const BindingCommandData &d, const Bindi
  *     original message in the MRP retransmit table and flips back to active as
  *     soon as the peer reappears, so the first attempt still gets delivered
  *     alongside the retry. Eviction aborts the exchange and clears that table.
+ *
+ * Those two guards are also what makes a short timeout safe. It is well below
+ * the peer's MRP budget, so a lamp that is merely slow may well be reached by
+ * the original attempt - but then it acked us and the guard above suppresses
+ * the resend, leaving a single command either way. The timeout is therefore set
+ * by how long a wall switch may feel unresponsive, not by MRP.
  */
-static constexpr uint32_t kInvokeResponseTimeoutMs = 5000;
+static constexpr uint32_t kInvokeResponseTimeoutMs = 1500;
 
 struct DirectSendCtx {
     BindingCommandData cmd;
@@ -533,6 +541,292 @@ struct DirectSendCtx {
         chip::Platform::Delete(static_cast<DirectSendCtx *>(raw));
     }
 };
+
+static void expire_peer_sessions(const chip::ScopedNodeId &peer)
+{
+    ESP_LOGW(TAG, "Expiring cached session to bound peer [%u:0x%llx]",
+             peer.GetFabricIndex(), (unsigned long long) peer.GetNodeId());
+    chip::Server::GetInstance().GetSecureSessionManager().ExpireAllSessions(peer);
+}
+
+static void expire_bound_peer_sessions()
+{
+    for (const auto &e : Binding::Table::GetInstance()) {
+        if (e.type != Binding::MATTER_UNICAST_BINDING) {
+            continue;
+        }
+        expire_peer_sessions(chip::ScopedNodeId(e.nodeId, e.fabricIndex));
+    }
+}
+
+/* ------------- Thread prefix changes invalidate cached sessions ------------- */
+/*
+ * A peer's IPv6 address is resolved once, while the CASE session is being
+ * established, and never refreshed for as long as that session stays in the
+ * table - which can be days, since sessions are only evicted when the table
+ * runs out of room. Border routers hand out a randomly generated on-mesh
+ * prefix, so a border router restart re-addresses every node in the network and
+ * leaves us sending to an address nobody listens on, noticed only when an
+ * invoke times out.
+ *
+ * OpenThread reports network-data changes, which is where on-mesh prefixes
+ * live, so compare the prefixes against the previous set and expire the
+ * sessions to all bound peers when they differ. The first press after a prefix
+ * change then pays one CASE handshake instead of an invoke timeout.
+ */
+#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
+static uint32_t s_onmesh_prefix_hash  = 0;
+static bool     s_onmesh_prefix_known = false;
+
+static uint32_t onmesh_prefix_hash()
+{
+    uint32_t hash = 2166136261u;   /* FNV-1a */
+
+    chip::DeviceLayer::ThreadStackMgr().LockThreadStack();
+    otInstance *instance = esp_openthread_get_instance();
+    if (instance != nullptr) {
+        otNetworkDataIterator it = OT_NETWORK_DATA_ITERATOR_INIT;
+        otBorderRouterConfig cfg;
+        while (otNetDataGetNextOnMeshPrefix(instance, &it, &cfg) == OT_ERROR_NONE) {
+            for (uint8_t byte : cfg.mPrefix.mPrefix.mFields.m8) {
+                hash = (hash ^ byte) * 16777619u;
+            }
+            hash = (hash ^ cfg.mPrefix.mLength) * 16777619u;
+        }
+    }
+    chip::DeviceLayer::ThreadStackMgr().UnlockThreadStack();
+
+    return hash;
+}
+
+static void thread_netdata_handler(const chip::DeviceLayer::ChipDeviceEvent *event,
+                                   intptr_t /*arg*/)
+{
+    if (event->Type != chip::DeviceLayer::DeviceEventType::kThreadStateChange) return;
+    if (!event->ThreadStateChange.NetDataChanged) return;
+
+    uint32_t hash = onmesh_prefix_hash();
+    if (s_onmesh_prefix_known && hash == s_onmesh_prefix_hash) return;
+
+    bool changed = s_onmesh_prefix_known;
+    s_onmesh_prefix_hash  = hash;
+    s_onmesh_prefix_known = true;
+    if (!changed) return;   /* first observation, nothing cached to invalidate */
+
+    ESP_LOGW(TAG, "Thread on-mesh prefixes changed, peer addresses are stale");
+    expire_bound_peer_sessions();
+}
+#endif /* CHIP_DEVICE_CONFIG_ENABLE_THREAD */
+
+/* ------------------- Reachability keepalive ------------------- */
+/*
+ * A prefix change is not the only way a cached session goes stale: the peer can
+ * reboot, or move to another parent and take a new RLOC with it. Nothing tells
+ * us, because a lamp without a subscription to us never sends anything, and CHIP
+ * only refreshes a peer address from messages it receives.
+ *
+ * So poll: read one global attribute (ClusterRevision, two bytes) from the bound
+ * cluster of every unicast peer, and drop the session when that read fails. A
+ * read is idempotent, unlike Toggle, so a lost keepalive costs nothing and the
+ * ReadClient is gone again as soon as the answer is in - no subscription state
+ * on either side, which matters because a Matter device only has to support
+ * three subscriptions per fabric and the controller needs those itself.
+ *
+ * The read goes to the bound endpoint and cluster on purpose: that is where the
+ * controller granted us access, so it cannot fail on ACL where a command would
+ * have succeeded.
+ */
+static constexpr uint32_t kKeepaliveDefaultSeconds = 600;
+static constexpr uint8_t  kKeepaliveMaxPeers       = 8;
+
+static uint32_t s_keepalive_seconds = kKeepaliveDefaultSeconds;
+
+#define KEEPALIVE_NVS_NS  "ota"
+#define KEEPALIVE_NVS_KEY "ka_s"
+
+static void keepalive_expire_worker(intptr_t arg)
+{
+    auto *peer = reinterpret_cast<chip::ScopedNodeId *>(arg);
+    expire_peer_sessions(*peer);
+    chip::Platform::Delete(peer);
+}
+
+/* Deferred: the failure arrives while the ReadClient is still on the stack. */
+static void keepalive_expire_later(const chip::ScopedNodeId &peer)
+{
+    auto *copy = chip::Platform::New<chip::ScopedNodeId>(peer);
+    if (copy == nullptr) {
+        return;
+    }
+    CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().ScheduleWork(
+        keepalive_expire_worker, reinterpret_cast<intptr_t>(copy));
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Keepalive: cannot schedule session eviction: %" CHIP_ERROR_FORMAT,
+                 err.Format());
+        chip::Platform::Delete(copy);
+    }
+}
+
+struct KeepaliveCtx {
+    chip::ScopedNodeId peer;
+    chip::EndpointId   remote;
+    chip::ClusterId    cluster;
+    chip::Callback::Callback<chip::OnDeviceConnected> connCb;
+    chip::Callback::Callback<chip::OnDeviceConnectionFailure> failCb;
+
+    KeepaliveCtx(const chip::ScopedNodeId &p, chip::EndpointId ep, chip::ClusterId c)
+        : peer(p), remote(ep), cluster(c), connCb(OnConn, this), failCb(OnFail, this) {}
+
+    static void OnConn(void *raw, chip::Messaging::ExchangeManager &em,
+                       const chip::SessionHandle &sh)
+    {
+        auto *self = static_cast<KeepaliveCtx *>(raw);
+        const chip::ScopedNodeId peer = self->peer;
+
+        CHIP_ERROR err = chip::Controller::ReadAttribute<uint16_t>(
+            &em, sh, self->remote, self->cluster,
+            chip::app::Clusters::Globals::Attributes::ClusterRevision::Id,
+            [peer](const chip::app::ConcreteDataAttributePath & /*path*/,
+                   const uint16_t & /*value*/) {
+                ESP_LOGD(TAG, "Keepalive: peer [%u:0x%llx] answered",
+                         peer.GetFabricIndex(), (unsigned long long) peer.GetNodeId());
+            },
+            [peer](const chip::app::ConcreteDataAttributePath * /*path*/, CHIP_ERROR err) {
+                ESP_LOGW(TAG, "Keepalive: peer [%u:0x%llx] unreachable (%" CHIP_ERROR_FORMAT
+                              "), dropping its cached session",
+                         peer.GetFabricIndex(), (unsigned long long) peer.GetNodeId(),
+                         err.Format());
+                keepalive_expire_later(peer);
+            });
+
+        if (err != CHIP_NO_ERROR) {
+            ESP_LOGW(TAG, "Keepalive: read to [%u:0x%llx] not started: %" CHIP_ERROR_FORMAT,
+                     peer.GetFabricIndex(), (unsigned long long) peer.GetNodeId(),
+                     err.Format());
+        }
+        /* The callbacks above capture the peer by value, so nothing here is
+         * needed once the read is handed to CHIP. */
+        chip::Platform::Delete(self);
+    }
+
+    static void OnFail(void *raw, const chip::ScopedNodeId &peer, CHIP_ERROR err)
+    {
+        ESP_LOGW(TAG, "Keepalive: no session to [%u:0x%llx]: %" CHIP_ERROR_FORMAT,
+                 peer.GetFabricIndex(), (unsigned long long) peer.GetNodeId(), err.Format());
+        chip::Platform::Delete(static_cast<KeepaliveCtx *>(raw));
+    }
+};
+
+static void keepalive_timer(chip::System::Layer *layer, void *arg);
+
+static void keepalive_reschedule()
+{
+    chip::DeviceLayer::SystemLayer().CancelTimer(keepalive_timer, nullptr);
+    if (s_keepalive_seconds == 0) {
+        return;
+    }
+    CHIP_ERROR err = chip::DeviceLayer::SystemLayer().StartTimer(
+        chip::System::Clock::Seconds32(s_keepalive_seconds), keepalive_timer, nullptr);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Keepalive: cannot start timer: %" CHIP_ERROR_FORMAT, err.Format());
+    }
+}
+
+static void keepalive_probe_peers()
+{
+    chip::NodeId probed[kKeepaliveMaxPeers];
+    uint8_t count = 0;
+
+    for (const auto &e : Binding::Table::GetInstance()) {
+        if (e.type != Binding::MATTER_UNICAST_BINDING) {
+            continue;
+        }
+        /* One probe per peer, however many endpoints are bound to it. */
+        bool seen = false;
+        for (uint8_t i = 0; i < count; i++) {
+            if (probed[i] == e.nodeId) {
+                seen = true;
+                break;
+            }
+        }
+        if (seen) {
+            continue;
+        }
+        if (count == kKeepaliveMaxPeers) {
+            ESP_LOGW(TAG, "Keepalive: more than %u bound peers, skipping the rest",
+                     (unsigned) kKeepaliveMaxPeers);
+            break;
+        }
+        probed[count++] = e.nodeId;
+
+        auto *ctx = chip::Platform::New<KeepaliveCtx>(
+            chip::ScopedNodeId(e.nodeId, e.fabricIndex), e.remote,
+            e.clusterId.value_or(OnOff::Id));
+        if (ctx == nullptr) {
+            ESP_LOGE(TAG, "Keepalive: OOM KeepaliveCtx");
+            return;
+        }
+        chip::Server::GetInstance().GetCASESessionManager()->
+            FindOrEstablishSession(ctx->peer, &ctx->connCb, &ctx->failCb);
+    }
+}
+
+static void keepalive_timer(chip::System::Layer * /*layer*/, void * /*arg*/)
+{
+    keepalive_probe_peers();
+    keepalive_reschedule();
+}
+
+static void keepalive_apply_worker(intptr_t /*arg*/)
+{
+    keepalive_reschedule();
+}
+
+static void keepalive_init()
+{
+    nvs_handle_t h;
+    if (nvs_open(KEEPALIVE_NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        uint32_t v = 0;
+        if (nvs_get_u32(h, KEEPALIVE_NVS_KEY, &v) == ESP_OK) {
+            s_keepalive_seconds = v;
+        }
+        nvs_close(h);
+    }
+    ESP_LOGI(TAG, "Binding keepalive interval = %lu s (0 = off)",
+             (unsigned long) s_keepalive_seconds);
+
+    CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().ScheduleWork(keepalive_apply_worker, 0);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Keepalive: cannot schedule start: %" CHIP_ERROR_FORMAT, err.Format());
+    }
+}
+
+extern "C" uint32_t matter_keepalive_interval_get(void)
+{
+    return s_keepalive_seconds;
+}
+
+extern "C" esp_err_t matter_keepalive_interval_set(uint32_t seconds)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(KEEPALIVE_NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_u32(h, KEEPALIVE_NVS_KEY, seconds);
+    if (err == ESP_OK) {
+        nvs_commit(h);
+    }
+    nvs_close(h);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    s_keepalive_seconds = seconds;
+    ESP_LOGI(TAG, "Binding keepalive interval saved: %lu s", (unsigned long) seconds);
+    CHIP_ERROR cerr = chip::DeviceLayer::PlatformMgr().ScheduleWork(keepalive_apply_worker, 0);
+    return (cerr == CHIP_NO_ERROR) ? ESP_OK : ESP_FAIL;
+}
 
 static void SwitchWorkerFunction(intptr_t context)
 {
@@ -1580,6 +1874,16 @@ extern "C" esp_err_t matter_start(const script_slot_type_t *slot_types, uint8_t 
     if (cerr != CHIP_NO_ERROR) {
         ESP_LOGE(TAG, "OTA apply handler not registered: %" CHIP_ERROR_FORMAT, cerr.Format());
     }
+
+#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
+    cerr = chip::DeviceLayer::PlatformMgr().AddEventHandler(thread_netdata_handler, 0);
+    if (cerr != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Thread network-data handler not registered: %" CHIP_ERROR_FORMAT,
+                 cerr.Format());
+    }
+#endif
+
+    keepalive_init();
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     esp_openthread_platform_config_t ot_cfg = {
