@@ -63,6 +63,11 @@ See [STOCK_GPIO.md](STOCK_GPIO.md) for the evidence per field. The Add-on Analog
 (GPIO17) and 1-Wire (GPIO16 in / GPIO9 out) are identical on every model; only
 Digital IN moves.
 
+The polarity is the same on every model: relays are **active-high**, status LEDs
+**active-low**, the onboard button and Add-on Digital IN **active-low** (internal
+pull-up), and the wall-switch inputs **active-high** in normal operation (see
+[BENCH_MODE](#bench_mode) for the development exception).
+
 > ℹ️ **Shelly 1 Mini Gen4 is supported.** Since installing straight from the stock Shelly web UI now
 > works (see [Firmware updates](#firmware-updates)), the Mini can be flashed
 > without opening it. The Mini has **no** Shelly Plus Add-on connector, so the
@@ -307,19 +312,19 @@ factory-fresh stock unit and has to be set up again from scratch.
 
 | GPIO | Function |
 |---|---|
-| **GPIO4** | PCB button (active-low) |
-| **GPIO5** | Relay output (active-high) |
-| **GPIO10** | Pushbutton input / SW terminal |
-| **GPIO15** | Status LED (active-low) |
+| **GPIO4** | PCB button — **active-low**, internal pull-up |
+| **GPIO5** | Relay output — **active-high** (high = relay closed) |
+| **GPIO10** | Pushbutton input / SW terminal — **active-high**, no internal pull (mains-referenced input circuit). In bench mode it becomes active-low with a pull-up so a plain button to GND works, see [BENCH_MODE](#bench_mode) |
+| **GPIO15** | Status LED — **active-low** (low = LED on) |
 
 **Shelly Plus Add-on** (via J6 connector):
 
 | GPIO | Function |
 |---|---|
-| **GPIO9** | 1-Wire TX — DS18B20 commands via ISO7221A isolator |
-| **GPIO16** | 1-Wire RX — DS18B20 responses via isolator |
-| **GPIO17** | Analog IN — occupancy sensor (e.g. HLK-LD2410S) |
-| **GPIO18** | Digital IN — TTP223 capacitive touch / add-on switch |
+| **GPIO9** | 1-Wire TX — DS18B20 commands via ISO7221A isolator. **Active-low** open-drain signalling (idle high); the isolator does not invert, so driving GPIO9 low pulls the bus low |
+| **GPIO16** | 1-Wire RX — DS18B20 responses via isolator. **Active-low**, idle high; a presence pulse reads as low |
+| **GPIO17** | Analog IN — occupancy sensor (e.g. HLK-LD2410S). **Active-high** PWM duty cycle with internal pull-down; ≥25 % duty (≈2.5 V on the 0–10 V scale) counts as occupied |
+| **GPIO18** | Digital IN — TTP223 capacitive touch / add-on switch. **Active-low**, internal pull-up (touch/contact active pulls the pin low). The Add-on terminal itself is active-low too (Shelly specifies −15 V…0.5 V = true, 2.5 V…15 V = false), so the isolator passes the level through uninverted. The stock firmware's "invert digital input" setting does not exist here — invert it in your Lua script if you need the opposite sense |
 
 **J6 connector pinout** (1.27 mm pitch, 7-pin header on back of PCB):
 
