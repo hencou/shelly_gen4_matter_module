@@ -30,17 +30,15 @@ CONFIG_OPENTHREAD_NUM_MESSAGE_BUFFERS=128
 # Native 802.15.4 radio (not via external RCP)
 CONFIG_OPENTHREAD_RADIO_NATIVE=y
 # Thread-only device (native 802.15.4 radio, no infra/backbone netif).
-# BORDER_ROUTER=y is the only switch that compiles OpenThread's SRP/DNS-SD
-# *server*, but on ESP-IDF v5.5.4 it also wires the ESP border-router glue.
-# After commissioning, ConfigureThreadStack calls otThreadSetEnabled(true)
-# (only when a dataset is stored), which hangs on a device that has no
-# infra/backbone interface -> the module never boots past Thread attach on
-# any reboot. The prebuilt libopenthread_br.a cannot be slimmed (its MeshCoP
-# mDNS publisher references otBackboneRouterGetState/otBorderRoutingGetOmrPrefix
-# unconditionally), so the server features cannot be split out. Keep it off so
-# the device boots; the srp_mode fallback server is therefore not available on
-# this SDK (see README).
+# BORDER_ROUTER stays off: it links the prebuilt libopenthread_br.a plus the ESP
+# border-router glue, whose MeshCoP mDNS publisher needs an infra/backbone netif
+# this device does not have -> the module hangs right after Thread attach.
+# The SRP/DNS-SD *server* is enabled separately through the custom OpenThread
+# header below; its sources are part of every FTD build, so it needs no BR glue.
 CONFIG_OPENTHREAD_BORDER_ROUTER=n
+CONFIG_OPENTHREAD_HEADER_CUSTOM=y
+CONFIG_OPENTHREAD_CUSTOM_HEADER_PATH="main"
+CONFIG_OPENTHREAD_CUSTOM_HEADER_FILE_NAME="openthread_custom_config.h"
 # LwIP
 CONFIG_LWIP_IPV6_NUM_ADDRESSES=12
 CONFIG_LWIP_MULTICAST_PING=y

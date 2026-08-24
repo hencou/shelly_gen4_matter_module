@@ -52,6 +52,22 @@ void ota_request_wifi_mode_reboot(void);
  * If STA connection fails, WiFi credentials are wiped and AP mode is started. */
 void ota_enable_wifi_runtime(void);
 
+/* Temporary WiFi STA *alongside* Thread, without a reboot. Triggered from the
+ * management page (which stays reachable over Thread the whole time). Connects
+ * as STA only — no SoftAP — and hands in the Thread router role plus the SRP
+ * fallback server for the duration, because WiFi and 802.15.4 share one radio
+ * and Espressif only documents "STA + Thread end device" as supported. Closes
+ * itself after 10 minutes and restores both. Pressing again while the window is
+ * open extends it to another 10 minutes.
+ * Returns ESP_ERR_INVALID_STATE when WiFi setup mode already owns the radio. */
+esp_err_t ota_wifi_coex_start(void);
+
+/* Close the temporary WiFi window early (teardown runs asynchronously). */
+esp_err_t ota_wifi_coex_stop(void);
+
+/* Seconds left in the temporary WiFi window; 0 when it is not open. */
+int ota_wifi_coex_seconds_left(void);
+
 /* True while runtime WiFi is active (6x press / WiFi setup mode). In this
  * state Thread is intentionally disabled, so the Thread watchdog must not
  * treat "not attached" as a fault. */

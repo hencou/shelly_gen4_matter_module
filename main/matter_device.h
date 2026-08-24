@@ -81,6 +81,19 @@ void matter_thread_watchdog_start(void);
  * would otherwise hide the whole mesh from off-mesh controllers. */
 esp_err_t matter_srp_server_start(void);
 
+/* Pause/resume the SRP fallback controller. Only Routers/Leaders may run the
+ * fallback server, so it has to stand down while the node gives up its router
+ * role for WiFi coexistence. Pausing also disables the server itself, so a
+ * peer can take over the election in the meantime. No-op when the controller
+ * was never started. */
+esp_err_t matter_srp_fallback_pause(bool pause);
+
+/* Router eligibility. Espressif documents Wi-Fi STA + Thread *router* as
+ * unstable on the single shared ESP32-C6 radio and only Wi-Fi STA + Thread end
+ * device as supported, so temporary WiFi drops the router role. A Router
+ * downgrades to Child on false; the node stays attached either way. */
+esp_err_t matter_thread_router_eligible_set(bool eligible);
+
 /* Spike: log the device's Thread unicast IPv6 addresses (OMR / mesh-local /
  * link-local) so the management page can be reached over IPv6/Thread from a
  * browser. matter_thread_addr_log_start() also re-logs every 15 s (the OMR

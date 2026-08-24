@@ -193,33 +193,60 @@ operational-discovery query a Thread node makes for another node — so a freshl
 reset/commissioned switch times out while resolving the lamp, even though the
 lamp is reachable and works from Home Assistant.
 
-> **Not available on this SDK.** Running an on-device SRP / DNS-SD *server*
-> requires `CONFIG_OPENTHREAD_BORDER_ROUTER=y`, which on ESP-IDF v5.5.x wires
-> the ESP border-router glue. After commissioning, the Thread stack calls
-> `otThreadSetEnabled(true)` (only when a dataset is stored), which hangs on a
-> Thread-only device that has no infra/backbone interface — the module never
-> boots past Thread attach on any reboot after commissioning. The prebuilt
-> `libopenthread_br.a` cannot be slimmed either (its MeshCoP mDNS publisher
-> references `otBackboneRouterGetState` / `otBorderRoutingGetOmrPrefix`
-> unconditionally). Therefore `CONFIG_OPENTHREAD_BORDER_ROUTER` is kept **off**
-> and the `srp_mode` fallback-server code is compiled out. The election logic
-> (`matter_srp_server_*`) is retained behind `#if CONFIG_OPENTHREAD_BORDER_ROUTER`
-> for a future SDK that can run the SRP server without a backbone interface.
->
-> To make freshly reset/commissioned switches resolve lamps for direct bindings,
-> add a real Thread border router with an advertising proxy that answers
-> operational-discovery queries (e.g. a Home Assistant OpenThread Border Router
-> on a ZBT-1/SkyConnect dongle or HA Yellow). Alternatively, drive the lamp from
-> a controller (Home Assistant automation), which needs no on-device resolve.
+The fallback server (**Hardware** tab → *SRP fallback server*, `srp_mode`) runs an
+on-device SRP / DNS-SD server, but only while the mesh has no border router; it
+yields the moment a real one appears, and only one module takes the role
+(election on RLOC16, lowest wins). The server needs the Router or Leader role, so
+a module that is only an End Device never runs it.
+
+How it is built: `CONFIG_OPENTHREAD_BORDER_ROUTER` stays **off** — turning it on
+links the prebuilt `libopenthread_br.a` plus the ESP border-router glue, whose
+MeshCoP mDNS publisher needs an infra/backbone interface this device does not
+have, and the module then hangs right after Thread attach on every reboot after
+commissioning. The SRP/DNS-SD server sources (`srp_server.cpp`,
+`dnssd_server.cpp`) are part of *every* FTD build though — only the enabling
+macros sit inside ESP-IDF's `#if CONFIG_OPENTHREAD_BORDER_ROUTER` block. So the
+server is enabled through a custom OpenThread header
+([`main/openthread_custom_config.h`](main/openthread_custom_config.h)), which
+needs no border-router glue at all.
+
+> The fallback has no advertising proxy: it fixes discovery *inside* the mesh
+> (a switch resolving a bound lamp), not discovery of the mesh from your LAN. For
+> that, add a real Thread border router with an advertising proxy (e.g. a Home
+> Assistant OpenThread Border Router on a ZBT-1/SkyConnect dongle).
 
 #### Switch to WiFi for faster management
 
-Two buttons on the dashboard (**WiFi & OTA** tab) reboot the device into a specific mode — handy for hard-to-reach devices you can only reach over Thread:
+Three buttons on the dashboard (**WiFi & OTA** tab) — handy for hard-to-reach
+devices you can only reach over Thread:
 
+- **Enable WiFi 10 min** — joins WiFi as a **station** next to a running Thread network, **without a reboot**, and switches WiFi off again after 10 minutes. Pressing it again extends the window; pressing it while the window is open closes it early. Needs saved WiFi credentials (no SoftAP in this mode).
 - **Restart to WiFi mode** — reboots into WiFi (STA if credentials are saved, otherwise the `shelly-cfg-XXXX` SoftAP on `192.168.4.1`) and serves the dashboard there. Matter/Thread stays down while in this mode. After **10 minutes** it automatically reboots back to Thread mode, so you never lose the device permanently.
 - **Restart to Thread mode** — reboots straight back into normal Matter-over-Thread operation.
 
-The physical shortcut still works too: **press any button 6× rapidly** (within 2.5 seconds) to disable Thread and start WiFi in APSTA mode at runtime (AP `shelly-cfg-XXXX` on `192.168.4.1`, plus STA if credentials are saved).
+The physical shortcut still works too: **press any button 6× rapidly** (within 2.5 seconds) to disable Thread and start WiFi in APSTA mode at runtime (AP `shelly-cfg-XXXX` on `192.168.4.1`, plus STA if credentials are saved). Use that when Thread is broken and the dashboard is unreachable.
+
+##### What temporary WiFi costs while it is open
+
+WiFi and 802.15.4 share one radio on the ESP32-C6, and Espressif documents only
+**one** stable combination: WiFi *station* next to a Thread **End Device**
+(SoftAP next to a Thread Router is listed as unsupported). The 10-minute window
+therefore:
+
+- starts WiFi as STA only — no SoftAP, so saved credentials are required;
+- keeps Thread up, but gives up the **router role** (`otThreadSetRouterEligible(false)`): no routing for other nodes, no children;
+- stands down the **SRP fallback server**, which requires Router/Leader;
+- shares the radio, so expect more Thread packet loss while WiFi is busy.
+
+All three are restored automatically when the window closes — no reboot. If
+Thread detaches while the window is open, the Thread watchdog closes the window
+immediately: Thread wins over temporary WiFi. The current state is visible on the
+**Hardware** tab (*Temporary WiFi*).
+
+> Not hardware-verified: coexistence stability only shows up under real WiFi
+> traffic over time. Check that the lamps keep switching over Thread while the
+> dashboard is served over WiFi, and that the router role returns after the
+> window closes.
 
 ### Backup & restore
 
@@ -266,10 +293,10 @@ For each release bump the version in **two** places — the build fails if they 
 
 | Where | Value | Reported as |
 |---|---|---|
-| `PROJECT_VER` in `CMakeLists.txt` | `1.6.3` | `SoftwareVersionString` and the version on the management dashboard; `PROJECT_VER_NUMBER` (`major*10000 + minor*100 + patch`) is derived from it and reported as `SoftwareVersion` |
-| `main/CHIPProjectConfig.h` | `10603` / `"1.6.3"` | the version the `.ota` image is tagged with |
+| `PROJECT_VER` in `CMakeLists.txt` | `1.6.4` | `SoftwareVersionString` and the version on the management dashboard; `PROJECT_VER_NUMBER` (`major*10000 + minor*100 + patch`) is derived from it and reported as `SoftwareVersion` |
+| `main/CHIPProjectConfig.h` | `10604` / `"1.6.4"` | the version the `.ota` image is tagged with |
 
-Both numbers must match: a controller compares `SoftwareVersion` (a number), not the string. If the `.ota` advertises a number the running firmware does not report, Home Assistant shows a permanent "update available" for the firmware it already runs — displayed as `1.6.3 (10603)` next to installed version `1.6.3`.
+Both numbers must match: a controller compares `SoftwareVersion` (a number), not the string. If the `.ota` advertises a number the running firmware does not report, Home Assistant shows a permanent "update available" for the firmware it already runs — displayed as `1.6.4 (10604)` next to installed version `1.6.4`.
 
 > Tip: `make-matter-ota.py` just wraps whatever is in `build/`. Always `idf.py build` first (use `idf.py fullclean` to force a genuine recompile) and confirm the `.ota` is fresh — a stale `build/` produces a stale `.ota`.
 
@@ -428,6 +455,7 @@ The relay functions take an **optional 1-based channel** argument (`1` = relay 1
 | **Commissioned** (normal) | OFF | ON (Thread active) | After commissioning |
 | **6× press** (management) | ON — APSTA mode | Thread disabled | Press any button 6× rapidly |
 | **WiFi mode** (management) | ON — STA or AP | Thread disabled | "Restart to WiFi mode" button (10 min, then back to Thread) |
+| **Temporary WiFi** (management) | ON — STA only | Thread active as End Device (no router role, no SRP fallback) | "Enable WiFi 10 min" button — no reboot, restores itself after 10 min |
 
 ## Status LED
 

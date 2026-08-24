@@ -72,7 +72,9 @@ extern "C" {
 #if CONFIG_OPENTHREAD_SRP_CLIENT
 #include <openthread/srp_client.h>
 #endif
-#if CONFIG_OPENTHREAD_BORDER_ROUTER
+#include <openthread/thread_ftd.h>
+#include "openthread_custom_config.h"
+#if OPENTHREAD_CONFIG_SRP_SERVER_ENABLE
 #include <openthread/srp_server.h>
 #endif
 
@@ -1180,6 +1182,15 @@ static void thread_watchdog_cb(void *)
     s_twdg_detached_ticks++;
     ESP_LOGW(TAG, "Thread detached — watchdog tick %d", s_twdg_detached_ticks);
 
+    /* Temporary WiFi shares the one radio, so Thread wins the moment it
+     * suffers: closing the window gives back the router role and lets the
+     * re-attach happen on a Thread-only radio. */
+    if (ota_wifi_coex_seconds_left() > 0) {
+        ESP_LOGW(TAG, "Thread detached while temporary WiFi is on — closing the WiFi window");
+        ota_wifi_coex_stop();
+        return;
+    }
+
     if (s_twdg_detached_ticks == TWDG_SOFT_TICKS) {
         ESP_LOGW(TAG, "Thread detached ~%d s — toggling interface to force re-attach",
                  (int)(TWDG_SOFT_TICKS * 30));
@@ -1218,7 +1229,7 @@ extern "C" void matter_thread_watchdog_start(void)
 #endif
 }
 
-#if CONFIG_OPENTHREAD_BORDER_ROUTER
+#if OPENTHREAD_CONFIG_SRP_SERVER_ENABLE
 /* Fallback SRP server: only fills the void when no real Thread Border Router
  * is present. A BR (e.g. Google Nest) runs the authoritative SRP server AND an
  * advertising proxy that bridges registrations to the LAN mDNS — without which
@@ -1250,6 +1261,7 @@ extern "C" void matter_thread_watchdog_start(void)
 
 static bool             s_srp_server_enabled = false;
 static bool             s_srp_fallback_active = false;
+static bool             s_srp_fallback_paused = false;
 static esp_timer_handle_t s_srp_eval_timer = nullptr;
 static int              s_srp_no_br_ticks = 0;
 static int              s_srp_yield_ticks = 0;
@@ -1359,7 +1371,7 @@ static void srp_eval_cb(void *)
 
 extern "C" esp_err_t matter_srp_server_start(void)
 {
-#if CONFIG_OPENTHREAD_BORDER_ROUTER
+#if OPENTHREAD_CONFIG_SRP_SERVER_ENABLE
     if (s_srp_fallback_active) return ESP_OK;
 
     srp_pick_enable_target();   /* per-node random enable delay to stagger peers */
@@ -1381,7 +1393,68 @@ extern "C" esp_err_t matter_srp_server_start(void)
     ESP_LOGI(TAG, "SRP fallback controller started — yields to any Thread border router");
     return ESP_OK;
 #else
-    ESP_LOGW(TAG, "SRP server not compiled in (CONFIG_OPENTHREAD_BORDER_ROUTER=n)");
+    ESP_LOGW(TAG, "SRP server not compiled in (OPENTHREAD_CONFIG_SRP_SERVER_ENABLE=0)");
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
+extern "C" esp_err_t matter_srp_fallback_pause(bool pause)
+{
+#if OPENTHREAD_CONFIG_SRP_SERVER_ENABLE
+    if (!s_srp_fallback_active || s_srp_eval_timer == nullptr) return ESP_OK;
+    if (pause == s_srp_fallback_paused) return ESP_OK;
+    s_srp_fallback_paused = pause;
+
+    if (pause) {
+        esp_timer_stop(s_srp_eval_timer);
+        chip::DeviceLayer::ThreadStackMgr().LockThreadStack();
+        otInstance *instance = esp_openthread_get_instance();
+        if (instance) srp_set_enabled_locked(instance, false);
+        chip::DeviceLayer::ThreadStackMgr().UnlockThreadStack();
+        s_srp_no_br_ticks = 0;
+        s_srp_yield_ticks = 0;
+        srp_pick_enable_target();
+        ESP_LOGW(TAG, "SRP fallback paused");
+        return ESP_OK;
+    }
+
+    esp_err_t err = esp_timer_start_periodic(s_srp_eval_timer, SRP_EVAL_PERIOD_US);
+    if (err != ESP_OK) {
+        s_srp_fallback_paused = true;   /* stay paused so a retry can resume */
+        ESP_LOGE(TAG, "SRP fallback: resume failed (%s)", esp_err_to_name(err));
+        return err;
+    }
+    ESP_LOGI(TAG, "SRP fallback resumed — re-running the election");
+    return ESP_OK;
+#else
+    (void)pause;
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
+extern "C" esp_err_t matter_thread_router_eligible_set(bool eligible)
+{
+#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
+    esp_err_t ret = ESP_OK;
+    chip::DeviceLayer::ThreadStackMgr().LockThreadStack();
+    otInstance *instance = esp_openthread_get_instance();
+    if (instance == nullptr) {
+        ret = ESP_ERR_INVALID_STATE;
+    } else {
+        otError err = otThreadSetRouterEligible(instance, eligible);
+        if (err != OT_ERROR_NONE) {
+            ESP_LOGE(TAG, "otThreadSetRouterEligible(%d) failed: %d", eligible, err);
+            ret = ESP_FAIL;
+        } else {
+            ESP_LOGW(TAG, "Thread router eligibility -> %s (role now %d)",
+                     eligible ? "enabled" : "disabled",
+                     (int)otThreadGetDeviceRole(instance));
+        }
+    }
+    chip::DeviceLayer::ThreadStackMgr().UnlockThreadStack();
+    return ret;
+#else
+    (void)eligible;
     return ESP_ERR_NOT_SUPPORTED;
 #endif
 }
