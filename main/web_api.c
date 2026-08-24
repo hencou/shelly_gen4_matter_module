@@ -242,6 +242,14 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
         snprintf(switch2_str, sizeof(switch2_str), "N/A");
     }
 
+    char wifi_temp_str[48];
+    int coex_left = ota_wifi_coex_seconds_left();
+    if (coex_left > 0) {
+        snprintf(wifi_temp_str, sizeof(wifi_temp_str), "ON (%d s left)", coex_left);
+    } else {
+        snprintf(wifi_temp_str, sizeof(wifi_temp_str), "OFF");
+    }
+
     pos = snprintf(json, sizeof(json),
         "{\"firmware\":\"%s (%s %s)\","
         "\"device_type\":\"%s\","
@@ -256,6 +264,7 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
         "\"reset_reason\":\"%s\","
         "\"bench_mode\":\"%s\","
         "\"srp_mode\":\"%s\","
+        "\"wifi_temp\":\"%s\","
         "\"keepalive_s\":%lu,"
         "\"pushbutton\":\"%s (GPIO%d=%d)\","
         "\"pcb_button\":\"%s (GPIO%d=%d)\","
@@ -277,6 +286,7 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
         rst,
         g_bench_mode ? "ON" : "OFF",
         ota_srp_mode_get() ? "ON" : "OFF",
+        wifi_temp_str,
         (unsigned long)matter_keepalive_interval_get(),
         btn_active ? "PRESSED" : "RELEASED", hw->switch_gpio, btn_level,
         pcb_active ? "PRESSED" : "RELEASED", hw->button_gpio, pcb_level,
@@ -431,6 +441,24 @@ static esp_err_t api_wifi_mode_post(httpd_req_t *req)
     vTaskDelay(pdMS_TO_TICKS(500));
     ota_request_wifi_mode_reboot();
     return ESP_OK;
+}
+
+/* Temporary WiFi STA alongside Thread, without a reboot. Toggles the window:
+ * open it for 10 minutes, or close it early when it is already open. Unlike
+ * /api/wifi-mode this keeps Matter and the Thread management page running. */
+static esp_err_t api_wifi_coex_post(httpd_req_t *req)
+{
+    if (ota_wifi_coex_seconds_left() > 0) {
+        ota_wifi_coex_stop();
+        return httpd_resp_sendstr(req, "Closing the WiFi window");
+    }
+
+    esp_err_t err = ota_wifi_coex_start();
+    if (err != ESP_OK) {
+        httpd_resp_set_status(req, "409 Conflict");
+        return httpd_resp_sendstr(req, esp_err_to_name(err));
+    }
+    return httpd_resp_sendstr(req, "WiFi enabled for 10 minutes, Thread stays up");
 }
 
 static esp_err_t api_factory_reset_post(httpd_req_t *req)
@@ -1144,7 +1172,7 @@ void web_api_start_httpd(void)
     hc.recv_wait_timeout  = 30;
     hc.send_wait_timeout  = 10;
     hc.max_open_sockets   = 3;
-    hc.max_uri_handlers   = 24;
+    hc.max_uri_handlers   = 26;
     ESP_ERROR_CHECK(httpd_start(&srv, &hc));
 
     httpd_uri_t get_root          = { "/",                  HTTP_GET,    form_get,              NULL };
@@ -1158,6 +1186,7 @@ void web_api_start_httpd(void)
     httpd_uri_t post_hw_config    = { "/api/hw-config",     HTTP_POST,   api_hw_config_post,    NULL };
     httpd_uri_t post_restart      = { "/api/restart",       HTTP_POST,   api_restart_post,      NULL };
     httpd_uri_t post_wifi_mode    = { "/api/wifi-mode",     HTTP_POST,   api_wifi_mode_post,    NULL };
+    httpd_uri_t post_wifi_coex    = { "/api/wifi-coex",     HTTP_POST,   api_wifi_coex_post,    NULL };
     httpd_uri_t post_factory      = { "/api/factory-reset", HTTP_POST,   api_factory_reset_post,NULL };
     httpd_uri_t post_commission   = { "/api/commission",    HTTP_POST,   api_commission_post,   NULL };
     httpd_uri_t get_backup        = { "/api/backup",        HTTP_GET,    api_backup_get,        NULL };
@@ -1183,6 +1212,7 @@ void web_api_start_httpd(void)
     httpd_register_uri_handler(srv, &post_hw_config);
     httpd_register_uri_handler(srv, &post_restart);
     httpd_register_uri_handler(srv, &post_wifi_mode);
+    httpd_register_uri_handler(srv, &post_wifi_coex);
     httpd_register_uri_handler(srv, &post_factory);
     httpd_register_uri_handler(srv, &post_commission);
     httpd_register_uri_handler(srv, &get_backup);
