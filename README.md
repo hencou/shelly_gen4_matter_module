@@ -324,7 +324,7 @@ factory-fresh stock unit and has to be set up again from scratch.
 | **GPIO9** | 1-Wire TX — DS18B20 commands via ISO7221A isolator. **Active-low** open-drain signalling (idle high); the isolator does not invert, so driving GPIO9 low pulls the bus low |
 | **GPIO16** | 1-Wire RX — DS18B20 responses via isolator. **Active-low**, idle high; a presence pulse reads as low |
 | **GPIO17** | Analog IN — occupancy sensor (e.g. HLK-LD2410S). **Active-high** PWM duty cycle with internal pull-down; ≥25 % duty (≈2.5 V on the 0–10 V scale) counts as occupied |
-| **GPIO18** | Digital IN — TTP223 capacitive touch / add-on switch. **Active-low**, internal pull-up (touch/contact active pulls the pin low) |
+| **GPIO18** | Digital IN — TTP223 capacitive touch / add-on switch. **Active-low**, internal pull-up (touch/contact active pulls the pin low). The Add-on terminal itself is active-low too (Shelly specifies −15 V…0.5 V = true, 2.5 V…15 V = false), so the isolator passes the level through uninverted. The stock firmware's "invert digital input" setting does not exist here — invert it in your Lua script if you need the opposite sense |
 
 **J6 connector pinout** (1.27 mm pitch, 7-pin header on back of PCB):
 
