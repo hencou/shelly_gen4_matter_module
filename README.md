@@ -144,35 +144,34 @@ together with the partition table and app, and is also the way to make a full
 After either first install, **all** further updates are over the air (Matter OTA
 / dashboard `.bin` upload, or a fresh web-UI package) — no UART needed.
 
-### 2. Factory reset → WiFi setup mode
+### 2. Factory reset → commissioning mode
 
-After flashing (or factory reset via the web interface), the module boots into **WiFi setup mode**:
+After flashing (or a factory reset via the web interface) the module comes up in
+**BLE commissioning mode** straight away — no WiFi, no setup step first:
 
-1. WiFi enabled, Bluetooth disabled
-2. STA connection attempt with compile-time credentials from `main/secrets.h`
-3. **STA succeeds** → credentials saved to NVS, management dashboard on router IP
-4. **STA fails** → fallback to AP mode: `shelly-cfg-XXXX` (open network, `http://192.168.4.1/`)
+1. Open Home Assistant → Settings → Devices & Services → Matter → "Add device"
+2. Enter setup code: **34970112332** (default, configurable in `sdkconfig.defaults`)
+3. HA Matter Server pairs via BLE and provisions Thread credentials
+4. After ~30-60s the device appears in HA
 
-### 3. Configure endpoints via dashboard
+A module that is already commissioned skips this and goes straight to Thread.
 
-Open the management dashboard in your browser and go to the **Scripts** tab:
+### 3. Configure endpoints via the dashboard
+
+Endpoints do **not** have to exist before commissioning. Open the management
+dashboard (over Thread, or via the 10-minute WiFi window — see below) and go to
+the **Scripts** tab:
 
 1. Set a **name**, **endpoint type**, **trigger**, and **Lua script** for each slot you need
 2. Click **Save** for each slot
 3. Click **Reboot** on the Scripts page
 
+The new endpoints appear in Home Assistant by themselves; if not, re-interview
+the device (Matter integration → device → *Reconfigure*/interview).
+
 See [SCRIPTS.md](SCRIPTS.md) for example scripts.
 
-### 4. Commissioning
-
-After reboot with configured endpoints, the module enters **BLE commissioning mode**:
-
-1. Open Home Assistant → Settings → Devices & Services → Matter → "Add device"
-2. Enter setup code: **34970112332** (default, configurable in `sdkconfig.defaults`)
-3. HA Matter Server pairs via BLE, provisions Thread credentials
-4. After ~30-60s the device appears in HA with the configured endpoints
-
-### 5. Normal operation
+### 4. Normal operation
 
 After commissioning, Thread + Bluetooth are active for Matter communication. WiFi is off by default.
 
@@ -220,11 +219,15 @@ needs no border-router glue at all.
 **Enable WiFi 10 min** on the dashboard (**WiFi & OTA** tab) joins WiFi as a
 **station** next to a running Thread network, **without a reboot**, and switches
 WiFi off again after 10 minutes. Pressing it again extends the window; pressing
-it while the window is open closes it early. Needs saved WiFi credentials (no
-SoftAP in this mode).
+it while the window is open closes it early.
 
 The physical shortcut does exactly the same: **press any button 6× rapidly**
 (within 2.5 seconds). Use that when the dashboard is unreachable over Thread.
+
+Both work regardless of commissioning status. Without saved WiFi credentials
+there is nothing to join, so the window opens an **open SoftAP**
+`shelly-cfg-XXXX` with the dashboard on `http://192.168.4.1/` instead — that is
+how you reach a module that has never been commissioned.
 
 ##### What temporary WiFi costs while it is open
 
@@ -233,7 +236,7 @@ WiFi and 802.15.4 share one radio on the ESP32-C6, and Espressif documents only
 (SoftAP next to a Thread Router is listed as unsupported). The 10-minute window
 therefore:
 
-- starts WiFi as STA only — no SoftAP, so saved credentials are required;
+- starts WiFi as STA (SoftAP only when no credentials are stored);
 - keeps Thread up, but gives up the **router role** (`otThreadSetRouterEligible(false)`): no routing for other nodes, no children;
 - stands down the **SRP fallback server**, which requires Router/Leader;
 - shares the radio, so expect more Thread packet loss while WiFi is busy.
@@ -260,7 +263,7 @@ Via the web management dashboard → **Factory Reset** button. This wipes:
 - All NVS data (WiFi credentials, script configurations, bench mode)
 - All Matter fabrics and commissioning data (NVS namespaces)
 
-After factory reset the module reboots into WiFi setup mode (step 2).
+After factory reset the module reboots into BLE commissioning mode (step 2).
 
 ## Firmware updates
 

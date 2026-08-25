@@ -1150,12 +1150,6 @@ static int                s_twdg_detached_ticks = 0;
 
 static void thread_watchdog_cb(void *)
 {
-    /* WiFi runtime mode intentionally disables Thread — never interfere. */
-    if (ota_wifi_runtime_active()) {
-        s_twdg_detached_ticks = 0;
-        return;
-    }
-
     auto &conn = chip::DeviceLayer::ConnectivityMgr();
     if (!conn.IsThreadProvisioned() || !conn.IsThreadEnabled()) {
         s_twdg_detached_ticks = 0;   /* not on Thread / intentionally off */

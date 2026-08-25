@@ -278,8 +278,7 @@ After flashing: **remove Pin 6 ↔ Pin 7 bridge**, then power-cycle. Otherwise S
 
 In the log you should see something like:
 ```
-I (... ) app: Not commissioned, no scripts — WiFi setup mode (BLE off)
-I (... ) ota: wifi_runtime: APSTA mode — AP 'shelly-cfg-XXXX' + STA '...'
+I (... ) app: Not commissioned — BLE commissioning mode
 I (... ) chip[DL]: Device Configuration:
 I (... ) chip[DL]:   Setup Pin Code: 20202021
 I (... ) chip[DL]:   Setup Discriminator: 3840 (0xF00)
@@ -310,7 +309,7 @@ Check in HA → Settings → Devices & Services → Thread → you should see at
 
 If pairing fails:
 - Check that the Shelly booted less than 5 minutes ago (BLE pairing window).
-- Press **6× rapid clicks** on any button → WiFi joins for 10 minutes next to Thread, so the management dashboard is reachable. From there you can factory reset to clear Matter NVS and reopen the pairing window. Requires WiFi credentials stored in NVS.
+- Press **6× rapid clicks** on any button → WiFi opens for 10 minutes next to Thread, so the management dashboard is reachable. From there you can factory reset to clear Matter NVS and reopen the pairing window. With stored WiFi credentials it joins as a station; without them it opens the open SoftAP `shelly-cfg-XXXX` (`http://192.168.4.1/`).
 
 ## 8. Pair a KAJPLATS bulb in Matter mode
 
