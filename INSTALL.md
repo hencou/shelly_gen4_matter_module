@@ -309,7 +309,7 @@ Check in HA → Settings → Devices & Services → Thread → you should see at
 
 If pairing fails:
 - Check that the Shelly booted less than 5 minutes ago (BLE pairing window).
-- Press **6× rapid clicks** on any button → WiFi opens for 10 minutes next to Thread, so the management dashboard is reachable. From there you can factory reset to clear Matter NVS and reopen the pairing window. With stored WiFi credentials it joins as a station; without them it opens the open SoftAP `shelly-cfg-XXXX` (`http://192.168.4.1/`).
+- Press **6× rapid clicks** on any button → WiFi opens for 10 minutes next to Thread, so the management dashboard is reachable. From there you can factory reset to clear Matter NVS and reopen the pairing window. With stored WiFi credentials it joins as a station; without them — or when they do not connect within a minute — it opens the open SoftAP `shelly-cfg-XXXXXX` (`http://192.168.4.1/`) for the rest of the window.
 
 ## 8. Pair a KAJPLATS bulb in Matter mode
 
@@ -373,7 +373,7 @@ esptool.py -p /dev/ttyUSB0 write_flash 0x0 shelly_stock_backup.bin
 | Lamp responds slowly (>1s) | Thread mesh can recover via rebooting Google TV Streamer; check `chip-tool thread show-state $SWITCH 0`. |
 | Crash at boot after OTA | Bootloader rollback active (see sdkconfig). It automatically falls back to the previous slot. Check your build. |
 | Long-press dimming doesn't work | Binding must include **cluster 8** (LevelControl), not just cluster 6. |
-| Not reachable over WiFi after 6× press | Ensure 6 rapid clicks within ~2.5s. This mode is station-only: no SoftAP, so WiFi credentials must be stored in NVS. Set them via the dashboard over Thread. |
+| Not reachable over WiFi after 6× press | Ensure 6 rapid clicks within ~2.5s. Without usable WiFi credentials it opens the open SoftAP `shelly-cfg-XXXXXX` (`http://192.168.4.1/`) after ~1 minute of trying to join. |
 | `esptool` timeout on `/dev/ttyUSB0` | Pin 6 (GPIO0) was not low at power-on. Bridge Pin 6 ↔ Pin 7 (GND) again and re-plug USB-UART. See chapter 4. |
 | Shelly boots into flash mode again after flash | Pin 6 ↔ Pin 7 bridge is still connected. Remove the jumper and power-cycle. |
 | Accidentally applied 5V to Pin 4 | Module is most likely dead. No rescue possible — replace only. Always use 3.3V. |

@@ -43,10 +43,11 @@ void ota_request_ota_reboot(void);
  * clicks on any input. Joins as STA and hands in the Thread router role plus
  * the SRP fallback server for the duration, because WiFi and 802.15.4 share one
  * radio and Espressif only documents "STA + Thread end device" as supported.
- * Without stored credentials it opens a SoftAP instead — the entry point for a
- * device that is not commissioned yet. Closes itself after 10 minutes and
- * restores the Thread role. Pressing again while the window is open extends it
- * to another 10 minutes. */
+ * Without stored credentials, or when they fail to connect within a minute, it
+ * opens a SoftAP for the rest of the window instead — the entry point for a
+ * device that is not commissioned yet, which would otherwise be unreachable
+ * altogether. Closes itself after 10 minutes and restores the Thread role.
+ * Pressing again while the window is open extends it to another 10 minutes. */
 esp_err_t ota_wifi_coex_start(void);
 
 /* Close the temporary WiFi window early (teardown runs asynchronously). */
