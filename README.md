@@ -118,7 +118,7 @@ Notes:
 There are two ways to install the firmware for the first time.
 
 **Option A — from the stock Shelly web UI (no UART, no opening the device):**
-- Download a precompiled shelly-gen4-matter-module-v<<version></version>-ota.zip from the Releases page: 
+- Download a precompiled `shelly-gen4-matter-module-v<version>-ota.zip` from the Releases page: 
 https://github.com/hencou/shelly_gen4_matter_module/releases
 
 - Or build the web-UI zip package from source:
@@ -298,7 +298,7 @@ Once the custom firmware is running you can update it three ways. They all flash
 
 Update over the existing Thread/Matter connection — no WiFi or cabling needed. 
 
-- Download a precompiled image from here:
+- Download a precompiled image `shelly-gen4-matter-module-v<version>-ota` from here:
 https://github.com/hencou/shelly_gen4_matter_module/releases
 
 - Or build the `.ota` image:
