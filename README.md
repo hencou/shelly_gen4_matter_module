@@ -22,7 +22,6 @@
 - **Lua 5.4 scripting** — write custom button/relay/sensor logic per endpoint slot (up to 8 slots)
 - **Matter 1.6** compatible — works with Home Assistant, Google Home, Apple Home
 - **Thread + WiFi** — Thread for Matter communication, WiFi for management/OTA
-- **Smart boot** — auto-detects factory reset vs configured vs commissioned state
 - **WiFi management dashboard** — configure scripts, WiFi, endpoints, backup/restore
 - **Over-the-air updates** — Matter OTA over Thread and `.bin` upload via the dashboard (standard ESP-IDF OTA with rollback). Can be installed straight from the stock Shelly web UI (no UART, no opening the device); UART is only needed to make a full backup or for a guaranteed return to stock. See [Firmware updates](#firmware-updates).
 
@@ -113,16 +112,25 @@ Notes:
 
 ### 1. First flash
 
+> Keep a full backup before flashing (see the warning under
+> [Firmware updates](#firmware-updates)).
+
 There are two ways to install the firmware for the first time.
 
 **Option A — from the stock Shelly web UI (no UART, no opening the device):**
-build the web-UI zip package and upload it through the stock Shelly device page
-(**Settings → Firmware**, "install from file"):
+- Download a precompiled shelly-gen4-matter-module-v<version>-ota.zip from the Releases page: 
+https://github.com/hencou/shelly_gen4_matter_module/releases
 
+- Or build the web-UI zip package from source:
 ```bash
 idf.py build
 python3 tools/make-webui-ota-zip.py     # → shelly-gen4-matter-module-v<version>-ota.zip
 ```
+
+- Upload it through the stock Shelly device page:
+(**Settings → Firmware**, "install from file"):
+
+Background info about the webui ota package:
 
 The package ships **no bootloader** — only `nvs`, `app` and `fs`. It keeps the
 stock "Shelly OS loader" so the stock updater's own A/B flow reliably boots our
@@ -132,9 +140,6 @@ valid `otadata` and reboots. From then on the module boots via the standard
 ESP-IDF bootloader + `otadata`, so OTA no longer depends on the stock loader's
 proprietary `SH0S` boot-select or on future Shelly loader changes. This is the
 only way to install on a **Shelly 1 Mini Gen4**, which has no accessible UART pads.
-
-> Keep a full backup before flashing (see the warning under
-> [Firmware updates](#firmware-updates)).
 
 **Option B — UART flash (see [INSTALL.md](INSTALL.md)):** open the device and
 wire a USB-UART adapter to the J6 connector. This installs the ESP-IDF bootloader
@@ -178,11 +183,14 @@ After commissioning, Thread + Bluetooth are active for Matter communication. WiF
 #### Reach the management dashboard over Thread
 
 The dashboard is served over IPv6 on the Thread network, so you can reach it **without WiFi**:
+Easiest way to find the IPv6 addres of the module is in Home Assistant → Devices → Matter → Click on device → Click on Matter info.
+Use this IPv6 address in the browser between square brackets, example: http://[ipv6 adress of module]
 
+Other ways to find the IPv6 address:
 - **Direct (always works):** the module logs its addresses at boot. Use the **OMR / SLAAC** address (marked `<-- OMR` in the log, e.g. `fd96:…`) and open `http://[<omr-ipv6>]/` from any host that routes to the Thread network through your border router. The mesh-local (`fd…:0:0:ff:fe00:…`) and link-local (`fe80:…`) addresses are not routable off-mesh.
 - **By name (mDNS):** the module advertises an `_http._tcp` service (instance label = configured hostname) via the Matter SRP client. A border router with an advertising proxy re-publishes it as LAN mDNS, so you can discover it with `avahi-browse -rt _http._tcp` / `dns-sd -B _http._tcp`, or generate a clickable overview of all modules with [`tools/shelly-overview.sh`](tools/shelly-overview.sh). Note the resolvable `.local` name is the opaque CHIP SRP host (e.g. `52E2….local`), not the friendly hostname — the friendly hostname is the service label you browse.
 
-#### SRP fallback server (discovery without a border router)
+#### SRP fallback server (discovery without a border router) background info
 
 Direct device-to-device control (a switch bound to a lamp) needs the switch to
 **resolve** the lamp's operational address over Thread DNS-SD. That resolution
@@ -244,9 +252,9 @@ End Device only as *limited* once a client is connected). The 10-minute window
 therefore:
 
 - starts WiFi as STA (SoftAP when there are no credentials, or when they fail);
-- keeps Thread up, but gives up the **router role** (`otThreadSetRouterEligible(false)`): no routing for other nodes, no children;
-- in the SoftAP fallback additionally makes Thread a **sleepy child** (`mRxOnWhenIdle=false`, 3 s parent poll). A station has an AP buffering frames for it while the radio serves 802.15.4, a SoftAP has nothing of the kind: with 802.15.4 receiving all the time, clients associate but never get a DHCP lease. Thread stays attached, but mesh traffic is as slow as the poll period until the window closes. Sleepy mode also drops the FTD role and full network data in the same link mode, because OpenThread refuses rx-off-when-idle on a full Thread device. If the stack still refuses, Thread goes **down** for the rest of the window and comes back at teardown: an unreachable module is worse than a Thread outage that ends by itself;
-- re-arms the coexistence arbiter (`esp_coex_wifi_i154_enable()`) before **every** `esp_wifi_start()`, because stopping WiFi hands the radio back to 802.15.4 — the SoftAP fallback would otherwise run without airtime;
+- keeps Thread up, but gives up the **router role**: no routing for other nodes, no children;
+- in the SoftAP fallback additionally makes Thread a **sleepy child**, 3 s parent poll). A station has an AP buffering frames for it while the radio serves 802.15.4, a SoftAP has nothing of the kind: with 802.15.4 receiving all the time, clients associate but never get a DHCP lease. Thread stays attached, but mesh traffic is as slow as the poll period until the window closes. Sleepy mode also drops the FTD role and full network data in the same link mode, because OpenThread refuses rx-off-when-idle on a full Thread device. If the stack still refuses, Thread goes **down** for the rest of the window and comes back at teardown: an unreachable module is worse than a Thread outage that ends by itself;
+- re-arms the coexistence arbiter before **every** `esp_wifi_start()`, because stopping WiFi hands the radio back to 802.15.4 — the SoftAP fallback would otherwise run without airtime;
 - stands down the **SRP fallback server**, which requires Router/Leader;
 - shares the radio, so expect more Thread packet loss while WiFi is busy.
 
@@ -255,11 +263,6 @@ Thread detaches while the window is open, the Thread watchdog closes the window
 immediately: Thread wins over temporary WiFi — unless the SoftAP fallback took
 Thread down deliberately, in which case the detached state is expected. The current state is visible on the
 **Hardware** tab (*Temporary WiFi*).
-
-> Not hardware-verified: coexistence stability only shows up under real WiFi
-> traffic over time. Check that the lamps keep switching over Thread while the
-> dashboard is served over WiFi, and that the router role returns after the
-> window closes.
 
 ### Backup & restore
 
@@ -274,15 +277,6 @@ Via the web management dashboard → **Factory Reset** button. This wipes:
 - All Matter fabrics and commissioning data (NVS namespaces)
 
 After factory reset the module reboots into BLE commissioning mode (step 2).
-
-Before wiping, both **Factory Reset** and **Commission Mode** hand the SRP host
-name and its services back to the SRP server, key lease included. The wipe takes
-the SRP client key with it, and without that hand-back the server keeps the old
-registration for the rest of its key lease (days) and rejects the same host name
-under the fresh key with `SRP update error: domain name or RRset is duplicated`
-— visible during commissioning as a module that stays hard to discover. If the
-server does not confirm within 3 s the reset continues anyway; restarting the
-border router (or `ot-ctl srp server disable` / `enable`) clears the stale claim.
 
 ## Firmware updates
 
@@ -302,46 +296,28 @@ Once the custom firmware is running you can update it three ways. They all flash
 
 ### 1. Matter OTA (over Thread)
 
-Update over the existing Thread/Matter connection — no WiFi or cabling needed. Build the `.ota` image and serve it from a Matter OTA provider (e.g. Home Assistant):
+Update over the existing Thread/Matter connection — no WiFi or cabling needed. 
+
+- Download a precompiled image from here:
+https://github.com/hencou/shelly_gen4_matter_module/releases
+
+- Or build the `.ota` image:
 
 ```bash
 idf.py build
 python3 tools/make-matter-ota.py      # → shelly-gen4-matter-module-v<version>.ota
 ```
+- And serve it from a Matter OTA provider (e.g. Home Assistant):
 
 The image embeds the vendor/product ID and software version; the device only accepts an image with a higher software version than it currently runs.
 
-For each release bump the version in **two** places — the build fails if they disagree:
-
-| Where | Value | Reported as |
-|---|---|---|
-| `PROJECT_VER` in `CMakeLists.txt` | `1.6.4` | `SoftwareVersionString` and the version on the management dashboard; `PROJECT_VER_NUMBER` (`major*10000 + minor*100 + patch`) is derived from it and reported as `SoftwareVersion` |
-| `main/CHIPProjectConfig.h` | `10604` / `"1.6.4"` | the version the `.ota` image is tagged with |
-
-Both numbers must match: a controller compares `SoftwareVersion` (a number), not the string. If the `.ota` advertises a number the running firmware does not report, Home Assistant shows a permanent "update available" for the firmware it already runs — displayed as `1.6.4 (10604)` next to installed version `1.6.4`.
-
-> Tip: `make-matter-ota.py` just wraps whatever is in `build/`. Always `idf.py build` first (use `idf.py fullclean` to force a genuine recompile) and confirm the `.ota` is fresh — a stale `build/` produces a stale `.ota`.
-
 ### 2. `.bin` upload via the management dashboard
 
-For modules already running this firmware: open the management dashboard (**6× rapid button press** → WiFi), go to the **WiFi & OTA** tab, and either provide a firmware URL or upload `build/shelly_gen4_matter_module.bin` directly. The device flashes the inactive OTA slot with `esp_ota_set_boot_partition()` and reboots into it; on boot the app marks itself valid, otherwise the bootloader rolls back.
+For modules already running this firmware: open the management dashboard (**6× rapid button press** → WiFi), go to the **WiFi & OTA** tab, and either provide a firmware URL or upload `build/shelly_gen4_matter_module.bin` directly. The device flashes the inactive OTA slot and reboots into it; on boot the app marks itself valid, otherwise the bootloader rolls back.
 
-### 3. Web-UI package (also for installing from stock Shelly)
+### 3. Return to stock Shelly firmware
 
-Build a Shelly web-UI package and upload it through a Shelly device page (the stock page when installing from stock, or the module's own web UI later):
-
-```bash
-idf.py build
-python3 tools/make-webui-ota-zip.py     # → shelly-gen4-matter-module-v<version>-ota.zip
-```
-
-The package ships **no bootloader** and **no partition table** — only `nvs`, `app` and `fs`. It keeps the stock "Shelly OS loader" so the stock v2.0 updater's own A/B flow installs our app into the inactive slot and boots it (shipping a foreign bootloader instead breaks this: the stock updater is `SH0S`-driven and an ESP-IDF bootloader cannot follow that boot-select). On the first boot under the stock loader the firmware performs a **one-time self-migration** (`main/loader_migrate.c`): it writes a valid ESP-IDF `otadata` for the running slot, flashes our embedded ESP-IDF bootloader to `0x0`, and reboots. From then on the module boots via the standard ESP-IDF bootloader + `otadata`, so OTA uses plain `esp_ota_set_boot_partition()` and no longer depends on the reverse-engineered stock `SH0S` boot-select or on future Shelly loader changes. These units are not flash-encrypted, so writing our plaintext bootloader is safe. This is the route used for the very first install from stock Shelly firmware (see [First flash](#1-first-flash)) and works regardless of whether the unit runs stock 1.5/1.7/2.0.
-
-> The migration is idempotent and self-terminating: once our ESP-IDF bootloader is at `0x0` the loader detection no longer sees the stock loader, so it never runs again. If a migration write ever fails, the app keeps running fine under the stock loader (OTA then uses `SH0S`); the firmware auto-detects which bootloader is present and picks the matching boot-select, so both paths keep working.
-
-### 4. Return to stock Shelly firmware
-
-The management dashboard (**Backup** tab) can flash an **original Shelly firmware package** back onto the module — the same `.zip` the stock web UI consumes. Download the package matching the model on your device label from the [community firmware archive](https://archive.shelly-tools.de/) (e.g. `S4SW-001X16EU` = Shelly 1 Gen4), then upload it under *Return to stock Shelly firmware*.
+The management dashboard (**Backup** tab) can flash an **original Shelly firmware package** back onto the module — the same `.zip` the stock web UI consumes. Download the package matching the model on your device label, then upload it under *Return to stock Shelly firmware*.
 
 The stock app cannot run under our ESP-IDF bootloader (it needs the Shelly OS loader and an `SH0S` boot state), so the module is made **byte-for-byte stock** again. The firmware first writes the stock **app** to the inactive slot and the stock **filesystem**, and verifies their SHA-256 — nothing outside that inactive slot is touched until this succeeds. It then restores, in order, the stock **boot state** (`otadata`), the stock **partition table** (`0x10000`), points the `SH0S` boot-select at the slot the stock app landed in, and finally rewrites the stock **bootloader** (Shelly OS loader) at `0x0`. Every write is verified by read-back. The factory `shelly` partition is never touched. The units are not flash-encrypted, so the plaintext images from the package reproduce the stock layout exactly.
 
@@ -501,22 +477,12 @@ Three mechanisms keep that off the critical path:
 
 | Mechanism | What it does |
 |---|---|
-| Invoke response timeout (1.5 s) | Fixed, in firmware. After a timeout the session is evicted and the command is retried once over a fresh CASE session — which does a new DNS-SD lookup. Skipped when the peer acknowledged the first attempt, because `Toggle` is not idempotent. |
+| Invoke response timeout (1.5 s) | After a timeout the session is evicted and the command is retried once over a fresh CASE session — which does a new DNS-SD lookup. Skipped when the peer acknowledged the first attempt, because `Toggle` is not idempotent. |
 | Thread network-data watch | Automatic. When the set of on-mesh prefixes changes, every cached session to a bound peer is evicted right away, because all peer addresses just expired. |
 | Binding keepalive | Configurable. Reads `ClusterRevision` from each bound peer's bound cluster every N seconds and drops the session when that read fails, so the failure is discovered in the background instead of on a button press. |
 
 The keepalive interval is set on the Hardware tab or over HTTP; `0` disables it,
 the minimum is 60 s. Default is 600 s.
-
-```
-curl -X POST http://<ip>/api/keepalive -H 'Content-Type: application/json' -d '{"seconds":600}'
-```
-
-Cost is one round trip of ~100–150 bytes per bound peer per interval, and the
-`ReadClient` is released once the answer arrives — no subscription is kept, on
-either side. A read is used rather than a subscription on purpose: a Matter
-device only has to support three subscriptions per fabric, and the controller
-needs those itself.
 
 ## BENCH_MODE
 
