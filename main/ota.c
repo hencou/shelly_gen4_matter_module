@@ -541,6 +541,25 @@ static void wifi_coex_teardown(void)
     ESP_LOGW(TAG, "wifi_coex: WiFi off, Thread router role and SRP fallback restored");
 }
 
+/* Register WiFi as a radio client next to 802.15.4. ESP-IDF does not do this on
+ * its own, and without it WiFi gets no airtime at all: the driver logs
+ * "coexist: 0" and the scan hears no beacon. Needed before every
+ * esp_wifi_start(), because esp_wifi_stop() hands the radio back (the driver
+ * calls coex_disable() through its OSI adapter) — so the SoftAP fallback has to
+ * ask for it again after the station attempt was stopped. */
+static esp_err_t wifi_coex_arbiter_enable(void)
+{
+#if CONFIG_ESP_COEX_SW_COEXIST_ENABLE && CONFIG_SOC_IEEE802154_SUPPORTED
+    esp_err_t err = esp_coex_wifi_i154_enable();
+    if (err != ESP_OK)
+        ESP_LOGE(TAG, "wifi_coex: coexistence arbiter refused to start (%s) — "
+                      "WiFi would get no airtime", esp_err_to_name(err));
+    return err;
+#else
+    return ESP_OK;
+#endif
+}
+
 /* Drop the station attempt without touching the driver, so the AP fallback can
  * reuse it. Unregister before esp_wifi_stop(): that emits STA_DISCONNECTED and
  * the handler would answer it by arming the reconnect timer. */
@@ -580,6 +599,8 @@ static esp_err_t wifi_coex_start_ap(void)
 
     esp_err_t err = esp_wifi_set_mode(WIFI_MODE_AP);
     if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_AP, &apc);
+    /* Claim the radio again: a preceding station attempt released it on stop. */
+    if (err == ESP_OK) err = wifi_coex_arbiter_enable();
     if (err == ESP_OK) err = esp_wifi_start();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "wifi_coex: SoftAP start failed (%s)", esp_err_to_name(err));
@@ -587,7 +608,11 @@ static esp_err_t wifi_coex_start_ap(void)
     }
 
     web_api_start_httpd();
-    ESP_LOGW(TAG, "wifi_coex: SoftAP '%s' open, dashboard on http://192.168.4.1/",
+    /* Espressif documents SoftAP next to 802.15.4 as limited even for an end
+     * device (a connected client is their "C1" cell), so Thread may drop
+     * packets while a browser is talking to the AP. */
+    ESP_LOGW(TAG, "wifi_coex: SoftAP '%s' open, dashboard on http://192.168.4.1/ "
+                  "(Thread shares the radio and may lose packets meanwhile)",
              ap_ssid);
     return ESP_OK;
 }
@@ -629,20 +654,6 @@ static void wifi_coex_task(void *arg)
         s_coex_wifi_inited = true;
     }
 
-#if CONFIG_ESP_COEX_SW_COEXIST_ENABLE && CONFIG_SOC_IEEE802154_SUPPORTED
-    /* Before esp_wifi_start(), because the driver samples the coexistence
-     * state while it comes up and the first scan runs immediately after. */
-    esp_err_t coex_err = esp_coex_wifi_i154_enable();
-    if (coex_err != ESP_OK) {
-        ESP_LOGE(TAG, "wifi_coex: coexistence arbiter refused to start (%s) — "
-                      "WiFi would get no airtime", esp_err_to_name(coex_err));
-        wifi_coex_teardown();
-        s_coex_active = false;
-        vTaskDelete(NULL);
-        return;
-    }
-#endif
-
     bool need_ap = !have_creds;
 
     if (have_creds) {
@@ -669,6 +680,9 @@ static void wifi_coex_task(void *arg)
 
         esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
         if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_STA, &wcfg);
+        /* Before esp_wifi_start(), because the driver samples the coexistence
+         * state while it comes up and the first scan runs right after. */
+        if (err == ESP_OK) err = wifi_coex_arbiter_enable();
         if (err == ESP_OK) err = esp_wifi_start();
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "wifi_coex: WiFi start failed (%s) — falling back to SoftAP",

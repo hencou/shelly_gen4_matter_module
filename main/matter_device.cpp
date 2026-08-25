@@ -36,6 +36,7 @@ extern "C" {
 #include "nvs.h"
 }
 
+#include <cinttypes>
 #include <cmath>
 
 #include <esp_matter.h>
@@ -1454,6 +1455,9 @@ static esp_timer_handle_t s_addr_log_timer = nullptr;
 static bool s_omr_logged = false;
 static char s_srp_http_instance[64] = {0};
 static bool s_srp_http_logged = false;
+/* Set once the host has been deregistered on the way to a reset, so nothing
+ * re-registers it in the seconds before the reboot. */
+static volatile bool s_srp_shutdown = false;
 
 static const char *addr_origin_str(uint8_t origin)
 {
@@ -1534,9 +1538,12 @@ static bool thread_has_omr(void)
  * flag, no SRP traffic). */
 static void srp_add_http_service(intptr_t /*arg*/)
 {
+    if (s_srp_shutdown) return;
+
     if (s_srp_http_instance[0] == '\0') {
         snprintf(s_srp_http_instance, sizeof(s_srp_http_instance), "%s", ota_hostname_get());
     }
+
     chip::Span<const char * const> noSubTypes;
     chip::Span<const chip::Dnssd::TextEntry> noTxtEntries;
     CHIP_ERROR err = chip::DeviceLayer::ThreadStackMgr().AddSrpService(
@@ -1561,8 +1568,57 @@ extern "C" void matter_srp_advertise_httpd(void)
         ESP_LOGW(TAG, "SRP: ScheduleWork failed: %" CHIP_ERROR_FORMAT, err.Format());
     }
 }
+
+/* Hand the SRP host name back to the server before a reset wipes the client's
+ * ECDSA key. Without this the server keeps the old registration under its key
+ * lease (14 days by default), and the freshly reset device -- same host name,
+ * new key -- gets "domain name or RRset is duplicated" until that lease runs
+ * out or the border router restarts. Blocks until the server confirms, because
+ * the caller reboots right after. */
+extern "C" esp_err_t matter_srp_deregister(uint32_t timeout_ms)
+{
+    s_srp_shutdown = true;
+
+    chip::DeviceLayer::ThreadStackMgr().LockThreadStack();
+    otInstance *instance = esp_openthread_get_instance();
+    otError err = instance ? otSrpClientRemoveHostAndServices(instance, true, true)
+                           : OT_ERROR_INVALID_STATE;
+    chip::DeviceLayer::ThreadStackMgr().UnlockThreadStack();
+
+    if (err == OT_ERROR_ALREADY) return ESP_OK;      /* nothing registered */
+    if (err != OT_ERROR_NONE) {
+        ESP_LOGW(TAG, "SRP: deregister could not start (%d)", (int)err);
+        return ESP_FAIL;
+    }
+
+    const uint32_t step_ms = 100;
+    for (uint32_t waited = 0; waited < timeout_ms; waited += step_ms) {
+        vTaskDelay(pdMS_TO_TICKS(step_ms));
+
+        otSrpClientItemState state = OT_SRP_CLIENT_ITEM_STATE_REMOVING;
+        chip::DeviceLayer::ThreadStackMgr().LockThreadStack();
+        instance = esp_openthread_get_instance();
+        if (instance) {
+            const otSrpClientHostInfo *host = otSrpClientGetHostInfo(instance);
+            if (host) state = host->mState;
+        }
+        chip::DeviceLayer::ThreadStackMgr().UnlockThreadStack();
+
+        if (state == OT_SRP_CLIENT_ITEM_STATE_REMOVED) {
+            ESP_LOGW(TAG, "SRP: host '%s' and its services deregistered, key lease released",
+                     s_srp_http_instance);
+            return ESP_OK;
+        }
+    }
+
+    ESP_LOGW(TAG, "SRP: server did not confirm the removal within %" PRIu32 " ms -- "
+                  "it may report a duplicated name until its key lease expires",
+             timeout_ms);
+    return ESP_ERR_TIMEOUT;
+}
 #else
 extern "C" void matter_srp_advertise_httpd(void) {}
+extern "C" esp_err_t matter_srp_deregister(uint32_t) { return ESP_ERR_NOT_SUPPORTED; }
 #endif
 
 extern "C" void matter_thread_addr_log_start(void)
@@ -1596,6 +1652,7 @@ extern "C" void matter_thread_addr_log_start(void)
 extern "C" void matter_log_thread_addrs(void) {}
 extern "C" void matter_thread_addr_log_start(void) {}
 extern "C" void matter_srp_advertise_httpd(void) {}
+extern "C" esp_err_t matter_srp_deregister(uint32_t) { return ESP_ERR_NOT_SUPPORTED; }
 #endif
 
 extern "C" void matter_factory_reset(void)

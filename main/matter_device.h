@@ -107,6 +107,13 @@ void matter_thread_addr_log_start(void);
  * The OMR IPv6 address is still logged as a direct fallback. */
 void matter_srp_advertise_httpd(void);
 
+/* Give the SRP host name and its services back to the SRP server, key lease
+ * included. Call this before a reset wipes the SRP client key: the server keeps
+ * the old registration for the whole key lease otherwise, and rejects the same
+ * host name under the new key with "domain name or RRset is duplicated".
+ * Blocks until the server confirms or timeout_ms passes. */
+esp_err_t matter_srp_deregister(uint32_t timeout_ms);
+
 /* Factory reset → wipes Matter NVS, leaves the fabric, reboot. */
 void matter_factory_reset(void);
 

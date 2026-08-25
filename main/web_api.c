@@ -453,6 +453,9 @@ static esp_err_t api_factory_reset_post(httpd_req_t *req)
 {
     httpd_resp_sendstr(req, "OK");
     ESP_LOGW(TAG, "Factory reset via web: wiping nvs");
+    /* Hand the SRP name back first: the wipe takes the client key with it, and
+     * the server would otherwise refuse the same host name under the new key. */
+    matter_srp_deregister(3000);
     nvs_flash_deinit();
     nvs_flash_erase();
     vTaskDelay(pdMS_TO_TICKS(500));
@@ -474,6 +477,8 @@ static esp_err_t api_commission_post(httpd_req_t *req)
 {
     httpd_resp_sendstr(req, "OK");
     ESP_LOGW(TAG, "Commission mode: removing Matter fabrics and rebooting into BLE pairing");
+    /* Release the SRP registration while the current client key is still valid. */
+    matter_srp_deregister(3000);
     /* Delete fabrics via the CHIP FabricTable API — partition-agnostic, so it
      * works whether the KVS lives in the "nvs" partition or a dedicated
      * "chip_kvs" partition (old-layout devices). */

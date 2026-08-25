@@ -235,15 +235,17 @@ is not configured either.
 
 WiFi and 802.15.4 share one radio on the ESP32-C6, and Espressif documents only
 **one** stable combination: WiFi *station* next to a Thread **End Device**
-(SoftAP next to a Thread Router is listed as unsupported). The 10-minute window
+(SoftAP next to a Thread Router is listed as unsupported, and SoftAP next to an
+End Device only as *limited* once a client is connected). The 10-minute window
 therefore:
 
 - starts WiFi as STA (SoftAP when there are no credentials, or when they fail);
 - keeps Thread up, but gives up the **router role** (`otThreadSetRouterEligible(false)`): no routing for other nodes, no children;
+- re-arms the coexistence arbiter (`esp_coex_wifi_i154_enable()`) before **every** `esp_wifi_start()`, because stopping WiFi hands the radio back to 802.15.4 — the SoftAP fallback would otherwise run without airtime;
 - stands down the **SRP fallback server**, which requires Router/Leader;
 - shares the radio, so expect more Thread packet loss while WiFi is busy.
 
-All three are restored automatically when the window closes — no reboot. If
+All of that is restored automatically when the window closes — no reboot. If
 Thread detaches while the window is open, the Thread watchdog closes the window
 immediately: Thread wins over temporary WiFi. The current state is visible on the
 **Hardware** tab (*Temporary WiFi*).
@@ -266,6 +268,15 @@ Via the web management dashboard → **Factory Reset** button. This wipes:
 - All Matter fabrics and commissioning data (NVS namespaces)
 
 After factory reset the module reboots into BLE commissioning mode (step 2).
+
+Before wiping, both **Factory Reset** and **Commission Mode** hand the SRP host
+name and its services back to the SRP server, key lease included. The wipe takes
+the SRP client key with it, and without that hand-back the server keeps the old
+registration for the rest of its key lease (days) and rejects the same host name
+under the fresh key with `SRP update error: domain name or RRset is duplicated`
+— visible during commissioning as a module that stays hard to discover. If the
+server does not confirm within 3 s the reset continues anyway; restarting the
+border router (or `ot-ctl srp server disable` / `enable`) clears the stale claim.
 
 ## Firmware updates
 
