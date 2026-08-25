@@ -237,7 +237,7 @@ If the wizard is needed (e.g. config validation fails): choose **"Use existing s
 
 ## 8. Connect ESP32-C6 / Shelly via UART
 
-Open the Shelly 1 Gen4 housing and connect a USB-UART adapter (CP2102) to the **J6 connector** (7-pin row). Full procedure + canonical pinout is in [`INSTALL.md` chapter 4](INSTALL.md#4-uart-flashing-via-the-j6-connector-on-the-back) — here only the summary:
+Connect a USB-UART adapter (CP2102) to the **J6 connector** (7-pin row). Full procedure + canonical pinout is in [`INSTALL.md` chapter 4](INSTALL.md#4-uart-flashing-via-the-j6-connector-on-the-back) — here only the summary:
 
 | CP2102 | Shelly J6 pin | Purpose |
 |---|---|---|
@@ -364,22 +364,6 @@ Cluster 6 = OnOff, cluster 8 = LevelControl.
 
 ---
 
-## 12. OTA — firmware updates
-
-The firmware supports two OTA paths:
-
-### WiFi OTA (primary, ready to use)
-1. `idf.py build` produces new `build/shelly_gen4_matter_module.bin`
-2. Copy this file to HA's `/config/www/`
-3. Click **10× rapidly** on your System 55 pushbutton on the Shelly
-4. First time: phone → SoftAP `shelly-ota-XXXXXX` → `http://192.168.4.1/` → enter SSID/pass/URL
-5. Subsequent times: 10× clicks suffice — credentials are saved
-
-### Matter OTA Provider (optional)
-The Matter OTA Requestor is activated in the firmware (`esp_matter_ota_requestor_init()` in `matter_start()`). To use this you need to run an external `chip-ota-provider-app` (see connectedhomeip examples). HA does not offer a built-in provider today; WiFi OTA remains the practical default.
-
----
-
 ## 13. Daily workflow
 
 After one-time installation:
@@ -399,101 +383,7 @@ idf.py -p /dev/ttyUSB0 flash monitor
 
 ---
 
-## 14. Common problems
-
-| Problem | Cause | Fix |
-|---|---|---|
-| `wsl: command not found` / WSL not installed | WSL feature off | `wsl --install -d Ubuntu-22.04` as admin, reboot |
-| WSL error `0x80370102` | Virtualization off in BIOS | BIOS → enable VT-x / AMD-V |
-| `WSL State: Stopped` | Normal after reboot | `wsl` or start menu Ubuntu |
-| `install.sh` fails on `mobly` / `ResolutionImpossible` | Pigweed bootstrapped on Python 3.10; `mobly==1.13` needs 3.11+ | `rm -rf connectedhomeip/connectedhomeip/.environment && PW_BOOTSTRAP_PYTHON=/usr/bin/python3.11 ./install.sh` |
-| `idf.py: command not found` | Env not sourced | `source ~/esp/esp-idf/export.sh` (or add to `~/.bashrc`) |
-| `permission denied` on `/dev/ttyUSB0` | User not in dialout group | `sudo usermod -aG dialout $USER` + reopen terminal |
-| USB port not visible in WSL | Forgot `usbipd attach` after reboot | PowerShell admin: `usbipd attach --wsl --busid <ID>` |
-| ESP-IDF extension says "config not valid" | Auto-detect fails | Skip wizard, add `source ~/esp/esp-idf/export.sh` to `~/.bashrc` and reload VS Code |
-| Build crashes with `out-of-memory` | WSL2 default RAM too low | Create `%USERPROFILE%\.wslconfig`: `[wsl2]` + `memory=8GB` + `processors=4`. Then `wsl --shutdown` and restart |
-| Slow build (>1 hour 2nd time) | Ccache not enabled | `export IDF_CCACHE_ENABLE=1` permanently in `~/.bashrc` |
-| Build from `/mnt/c/` extremely slow | Cross-FS overhead | Move project to `~/projects/` |
-
----
-
-## 15. Known build issues with older esp-matter release branches
-
-These project templates are already fixed; listed here for reference for anyone setting up their own Matter projects on v1.4.
-
-### 15.1 `static_assert: Wi-Fi network endpoint id and Thread network endpoint id should not be the same`
-
-**Cause:** both `CONFIG_ENABLE_WIFI_STATION=y` and `CONFIG_OPENTHREAD_ENABLED=y` active → Matter tries to create two Network Commissioning Cluster instances on endpoint 0.
-
-**Fix** (in `sdkconfig.defaults`):
-```
-CONFIG_ENABLE_MATTER_OVER_THREAD=y
-CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=y
-CONFIG_ENABLE_WIFI_STATION=n
-CONFIG_ENABLE_WIFI_AP=n
-```
-
-Master toggle `CONFIG_ENABLE_MATTER_OVER_THREAD=y` gates all WiFi-Matter paths out.
-
-### 15.2 `fatal error: esp_matter.h: No such file or directory`
-
-**Cause:** main component missing `esp_matter` in `PRIV_REQUIRES`.
-
-**Fix** (`main/CMakeLists.txt`):
-```cmake
-PRIV_REQUIRES
-    ...
-    chip
-    esp_matter
-```
-
-### 15.3 `'ChipDevicePlatformEvent' does not name a type` + `static_cast` from `ConnectivityManager*` → `ConnectivityManagerImpl*` fails
-
-**Cause:** platform target defines are missing. esp-matter's GN build normally passes these through to CMake, but on v1.4 release branch with Thread-only configs this sometimes leaks.
-
-**Fix** (root `CMakeLists.txt`, after `project()`):
-```cmake
-idf_build_set_property(CXX_COMPILE_OPTIONS "-std=gnu++17;-Os;-DCHIP_HAVE_CONFIG_H;-Wno-overloaded-virtual" APPEND)
-idf_build_set_property(C_COMPILE_OPTIONS "-Os" APPEND)
-idf_build_set_property(COMPILE_OPTIONS "-Wno-format-nonliteral;-Wno-format-security" APPEND)
-```
-
-And in `main/CMakeLists.txt`:
-```cmake
-set_property(TARGET ${COMPONENT_LIB} PROPERTY CXX_STANDARD 17)
-target_compile_options(${COMPONENT_LIB} PRIVATE "-DCHIP_HAVE_CONFIG_H")
-```
-
-`CHIP_HAVE_CONFIG_H` triggers the correct platform config selection in connectedhomeip headers. Pattern taken from `$ESP_MATTER_PATH/examples/light_switch/CMakeLists.txt`.
-
-### 15.4 Partition table `does not fit in configured flash size 2MB`
-
-**Cause:** Shelly 1 Gen4 has 8 MB flash, ESP-IDF default is 2 MB.
-
-**Fix** (`sdkconfig.defaults`):
-```
-CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
-CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
-```
-
-### 15.5 API drift v1.4 (code level)
-
-Code written against older Matter API fails on v1.4 with:
-
-| Old | New in v1.4 |
-|---|---|
-| `EMBER_MULTICAST_BINDING` | `MATTER_MULTICAST_BINDING` |
-| `EMBER_UNICAST_BINDING` | `MATTER_UNICAST_BINDING` |
-| `ESP_MATTER_NONE_FEATURE_MAP` | `ESP_MATTER_NONE_FEATURE_ID` |
-| `chip::BindingManager::Params` | `chip::BindingManagerInitParams` (top-level, with extra `mStorage` field) |
-| `cmd.optionsMask = 0` (int → BitMask) | Omit — default init is already an empty BitMask |
-| `InvokeCommandRequest(... , void(*)(void*, ...), void(*)(void*, CHIP_ERROR))` | Typed lambdas: `[](const ConcreteCommandPath&, const StatusIB&, const auto& response){}` for success, `[](CHIP_ERROR){}` for error |
-
-Plus `#include <app/clusters/bindings/BindingManager.h>` (BindingManager class moved away from `binding-table.h`).
-
----
-
-## 16. Next steps
+## 14. Next steps
 
 See:
 - [`README.md`](README.md) — architecture, Matter device types, binding explanation
