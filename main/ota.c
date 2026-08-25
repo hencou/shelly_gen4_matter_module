@@ -33,6 +33,8 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
+#include "esp_coexist.h"
+#include "esp_coex_i154.h"
 #include "esp_https_ota.h"
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
@@ -671,7 +673,12 @@ bool ota_wifi_runtime_active(void)
  * together with the router role.
  *
  * Setup and teardown both happen in this one task, so the window closes on its
- * own without a reboot. */
+ * own without a reboot.
+ *
+ * The coexistence arbiter between WiFi and 802.15.4 is not started by ESP-IDF
+ * itself: the application has to call esp_coex_wifi_i154_enable() (see the
+ * ot_br and zigbee_gateway examples). Without it WiFi never gets airtime next
+ * to a running Thread stack and even the scan comes up empty. */
 
 #define WIFI_COEX_WINDOW_US    (10ULL * 60 * 1000 * 1000)   /* 10 minutes */
 #define WIFI_COEX_CONNECT_MS   60000                        /* give up if never up */
@@ -704,6 +711,11 @@ static void wifi_coex_teardown(void)
         esp_wifi_stop();
         esp_wifi_deinit();          /* hands the driver RAM back to Matter/Thread */
         s_coex_wifi_inited = false;
+#if CONFIG_ESP_COEX_SW_COEXIST_ENABLE && CONFIG_SOC_IEEE802154_SUPPORTED
+        /* WiFi is gone, so make sure 802.15.4 is registered as a radio client
+         * again and gets the whole radio back. */
+        esp_coex_ieee802154_status_enable();
+#endif
     }
 
     matter_thread_router_eligible_set(true);
@@ -750,6 +762,20 @@ static void wifi_coex_task(void *arg)
         s_coex_wifi_inited = true;
     }
 
+#if CONFIG_ESP_COEX_SW_COEXIST_ENABLE && CONFIG_SOC_IEEE802154_SUPPORTED
+    /* Before esp_wifi_start(), because the driver samples the coexistence
+     * state while it comes up and the first scan runs immediately after. */
+    esp_err_t coex_err = esp_coex_wifi_i154_enable();
+    if (coex_err != ESP_OK) {
+        ESP_LOGE(TAG, "wifi_coex: coexistence arbiter refused to start (%s) — "
+                      "WiFi would get no airtime", esp_err_to_name(coex_err));
+        wifi_coex_teardown();
+        s_coex_active = false;
+        vTaskDelete(NULL);
+        return;
+    }
+#endif
+
     if (!s_wifi_evt) s_wifi_evt = xEventGroupCreate();
     xEventGroupClearBits(s_wifi_evt, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
     s_retry = 0;
@@ -766,6 +792,10 @@ static void wifi_coex_task(void *arg)
     strncpy((char*)wcfg.sta.ssid,     ssid, sizeof(wcfg.sta.ssid));
     strncpy((char*)wcfg.sta.password, pass, sizeof(wcfg.sta.password));
     wcfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    /* Sharing the radio means beacons get missed, so scan every channel and
+     * pick the strongest AP instead of the first hit. */
+    wcfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    wcfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
 
     esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
     if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_STA, &wcfg);
