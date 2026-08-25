@@ -164,7 +164,7 @@ A module that is already commissioned skips this and goes straight to Thread.
 ### 3. Configure endpoints via the dashboard
 
 Endpoints do **not** have to exist before commissioning. Open the management
-dashboard (over Thread, or via the 10-minute WiFi window — see [below](https://github.com/hencou/shelly_gen4_matter_module#reach-the-management-dashboard-over-thread)) and go to
+dashboard (over Thread, or via the 10-minute WiFi window — see below: [Reach the management dashboard over Thread](https://github.com/hencou/shelly_gen4_matter_module#reach-the-management-dashboard-over-thread)) and go to
 the **Scripts** tab:
 
 1. Set a **name**, **endpoint type**, **trigger**, and **Lua script** for each slot you need
