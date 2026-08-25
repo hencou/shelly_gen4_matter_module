@@ -14,9 +14,8 @@ extern "C" {
  * Two WiFi paths:
  *
  * A) Temporary WiFi next to Thread (6x clicks, or the button on the management
- *    page): STA only, no reboot, closes itself after 10 minutes. See
- *    ota_wifi_coex_start(). WiFi setup mode (SoftAP) is only used while the
- *    device is not commissioned yet.
+ *    page): no reboot, closes itself after 10 minutes. See
+ *    ota_wifi_coex_start().
  *
  * B) Dedicated OTA mode (via ota_request_at_next_boot):
  *   1) NVS flag set + reboot.
@@ -39,19 +38,15 @@ void ota_request_at_next_boot(void);
 /* Set OTA pending flag and reboot (used by web /ota POST handler). */
 void ota_request_ota_reboot(void);
 
-/* WiFi setup mode: SoftAP (plus STA when credentials are stored) with the
- * management dashboard, for a device that is not commissioned yet. Matter/Thread
- * does not run in this mode. */
-void ota_enable_wifi_runtime(void);
-
-/* Temporary WiFi STA *alongside* Thread, without a reboot. Triggered from the
- * management page (which stays reachable over Thread the whole time). Connects
- * as STA only — no SoftAP — and hands in the Thread router role plus the SRP
- * fallback server for the duration, because WiFi and 802.15.4 share one radio
- * and Espressif only documents "STA + Thread end device" as supported. Closes
- * itself after 10 minutes and restores both. Pressing again while the window is
- * open extends it to another 10 minutes. Also what 6x clicks on any input do.
- * Returns ESP_ERR_INVALID_STATE when WiFi setup mode already owns the radio. */
+/* Temporary WiFi *alongside* Thread, without a reboot. Triggered from the
+ * management page (which stays reachable over Thread the whole time) or by 6x
+ * clicks on any input. Joins as STA and hands in the Thread router role plus
+ * the SRP fallback server for the duration, because WiFi and 802.15.4 share one
+ * radio and Espressif only documents "STA + Thread end device" as supported.
+ * Without stored credentials it opens a SoftAP instead — the entry point for a
+ * device that is not commissioned yet. Closes itself after 10 minutes and
+ * restores the Thread role. Pressing again while the window is open extends it
+ * to another 10 minutes. */
 esp_err_t ota_wifi_coex_start(void);
 
 /* Close the temporary WiFi window early (teardown runs asynchronously). */
@@ -59,10 +54,6 @@ esp_err_t ota_wifi_coex_stop(void);
 
 /* Seconds left in the temporary WiFi window; 0 when it is not open. */
 int ota_wifi_coex_seconds_left(void);
-
-/* True while WiFi setup mode is active. In that state Thread is intentionally
- * disabled, so the Thread watchdog must not treat "not attached" as a fault. */
-bool ota_wifi_runtime_active(void);
 
 /* Save WiFi creds + URL in NVS (can also be done via web form). */
 esp_err_t ota_save_credentials(const char *ssid, const char *password,
@@ -86,13 +77,6 @@ esp_err_t ota_srp_mode_set(bool on);
 
 /* Save bench mode value to NVS (used by web API). */
 esp_err_t ota_bench_mode_save(int on);
-
-/* Commission pending flag: set by the web API commission endpoint before it
- * clears Matter fabrics and reboots. On the next boot the smart-boot logic
- * uses it to stay in BLE commissioning mode instead of falling back to WiFi
- * setup mode. Stored in NVS. */
-bool ota_commission_pending_get(void);
-esp_err_t ota_commission_pending_set(bool on);
 
 /* Hostname: stored in NVS, used as DHCP hostname.
  * Default: "shelly-XXXXXX" (last 3 bytes of MAC). */

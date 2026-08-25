@@ -59,7 +59,6 @@ static const char *TAG = "ota";
 #define NVS_KEY_BENCH       "bench"
 #define NVS_KEY_SRP         "srp"
 #define NVS_KEY_HOSTNAME    "hostname"
-#define NVS_KEY_COMMISSION  "comm_pend"
 
 /* Runtime bench mode — initialised from NVS in bench_mode_init(). */
 int g_bench_mode = BENCH_MODE;
@@ -221,31 +220,6 @@ esp_err_t ota_bench_mode_save(int on)
     nvs_close(h);
     g_bench_mode = on;
     ESP_LOGI(TAG, "bench_mode saved: %d", on);
-    return err;
-}
-
-/* ---------- Commission pending flag ---------- */
-
-bool ota_commission_pending_get(void)
-{
-    nvs_handle_t h;
-    uint8_t v = 0;
-    if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
-        nvs_get_u8(h, NVS_KEY_COMMISSION, &v);
-        nvs_close(h);
-    }
-    return v != 0;
-}
-
-esp_err_t ota_commission_pending_set(bool on)
-{
-    nvs_handle_t h;
-    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
-    if (err != ESP_OK) return err;
-    nvs_set_u8(h, NVS_KEY_COMMISSION, on ? 1 : 0);
-    nvs_commit(h);
-    nvs_close(h);
-    ESP_LOGI(TAG, "commission_pending saved: %d", on);
     return err;
 }
 
@@ -463,7 +437,7 @@ static void ota_mode_button_cb(input_id_t id, button_event_t evt)
     ESP_LOGI(TAG, "OTA mode: input=%d evt=%d ignored", id, evt);
 }
 
-/* ---------- Runtime WiFi enable (alongside Thread/Matter) ---------- */
+/* ---------- Temporary WiFi alongside Thread/Matter ---------- */
 
 static void build_ap_ssid(char *buf, size_t len)
 {
@@ -497,152 +471,22 @@ static bool load_sta_credentials(char *ssid, size_t ssidlen,
     return have_creds;
 }
 
-static void wifi_runtime_task(void *arg)
-{
-    (void)arg;
-    char ssid[33] = {0}, pass[65] = {0}, url[256] = {0};
-    bool from_compile_time = false;
-    bool have_creds = load_sta_credentials(ssid, sizeof(ssid), pass, sizeof(pass),
-                                           url, sizeof(url), &from_compile_time);
+/* ---------- Temporary WiFi alongside Thread (no reboot) ---------- */
 
-    esp_netif_init();
-    esp_event_loop_create_default();
-    if (!esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"))
-        esp_netif_create_default_wifi_sta();
-    if (!esp_netif_get_handle_from_ifkey("WIFI_AP_DEF"))
-        esp_netif_create_default_wifi_ap();
-
-    /* Set DHCP hostname so the device is discoverable by name */
-    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-    if (sta) {
-        esp_netif_set_hostname(sta, ota_hostname_get());
-        ESP_LOGI(TAG, "wifi_runtime: hostname set to '%s'", ota_hostname_get());
-    }
-
-    {
-        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-        ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    }
-
-    s_wifi_evt = xEventGroupCreate();
-    s_retry = 0;
-    s_wifi_reconnect_timer = xTimerCreate(
-        "wifi_rc", pdMS_TO_TICKS(5000), pdFALSE, NULL, wifi_reconnect_cb);
-
-    {
-        esp_event_handler_instance_t any_id, got_ip;
-        esp_event_handler_instance_register(
-            WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, &any_id);
-        esp_event_handler_instance_register(
-            IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, &got_ip);
-    }
-
-    char ap_ssid[32];
-    build_ap_ssid(ap_ssid, sizeof(ap_ssid));
-
-    wifi_config_t apc = {
-        .ap = {
-            .max_connection = 3,
-            .authmode = WIFI_AUTH_OPEN,
-            .channel = 6,
-        },
-    };
-    strncpy((char*)apc.ap.ssid, ap_ssid, sizeof(apc.ap.ssid));
-    apc.ap.ssid_len = strlen(ap_ssid);
-
-    if (have_creds) {
-        ESP_LOGI(TAG, "wifi_runtime: APSTA mode — AP '%s' + STA '%s' (source: %s)",
-                 ap_ssid, ssid, from_compile_time ? "compile-time" : "NVS");
-
-        wifi_config_t wcfg = { 0 };
-        strncpy((char*)wcfg.sta.ssid, ssid, sizeof(wcfg.sta.ssid));
-        strncpy((char*)wcfg.sta.password, pass, sizeof(wcfg.sta.password));
-        wcfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
-
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &apc));
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wcfg));
-        ESP_ERROR_CHECK(esp_wifi_start());
-
-        ESP_LOGW(TAG, "wifi_runtime: AP ready '%s', http://192.168.4.1/", ap_ssid);
-
-        EventBits_t bits = xEventGroupWaitBits(
-            s_wifi_evt, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-            pdFALSE, pdFALSE, pdMS_TO_TICKS(30000));
-
-        if (bits & WIFI_CONNECTED_BIT) {
-            ESP_LOGW(TAG, "wifi_runtime: STA connected — management httpd on both AP and STA");
-            if (from_compile_time) {
-                ota_save_credentials(ssid, pass, url);
-                ESP_LOGI(TAG, "wifi_runtime: compile-time credentials saved to NVS");
-            }
-        } else {
-            ESP_LOGW(TAG, "wifi_runtime: STA failed — AP '%s' still available", ap_ssid);
-        }
-    } else {
-        ESP_LOGW(TAG, "wifi_runtime: no credentials, AP-only mode '%s'", ap_ssid);
-
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &apc));
-        ESP_ERROR_CHECK(esp_wifi_start());
-
-        ESP_LOGW(TAG, "wifi_runtime: AP ready '%s', http://192.168.4.1/", ap_ssid);
-    }
-
-    web_api_start_httpd();
-    vTaskDelete(NULL);
-}
-
-static bool s_wifi_runtime_started = false;
-static TimerHandle_t s_wifi_timeout_timer = NULL;
-
-#define WIFI_TIMEOUT_MS (10 * 60 * 1000)  /* 10 minutes */
-
-static void wifi_timeout_cb(TimerHandle_t xTimer)
-{
-    (void)xTimer;
-    ESP_LOGW(TAG, "WiFi timeout (10 min) — shutting down WiFi");
-    esp_wifi_stop();
-    esp_wifi_deinit();
-    s_wifi_runtime_started = false;
-    ESP_LOGI(TAG, "WiFi stopped, back to Thread-only mode");
-}
-
-void ota_enable_wifi_runtime(void)
-{
-    if (s_wifi_runtime_started) {
-        ESP_LOGW(TAG, "WiFi runtime already started, ignoring");
-        return;
-    }
-    s_wifi_runtime_started = true;
-    ESP_LOGW(TAG, "Enabling WiFi alongside Thread (runtime, non-persistent)");
-    xTaskCreate(wifi_runtime_task, "wifi_rt", 4096, NULL, 5, NULL);
-
-    s_wifi_timeout_timer = xTimerCreate(
-        "wifi_to", pdMS_TO_TICKS(WIFI_TIMEOUT_MS), pdFALSE, NULL, wifi_timeout_cb);
-    if (s_wifi_timeout_timer) {
-        xTimerStart(s_wifi_timeout_timer, 0);
-        ESP_LOGI(TAG, "WiFi auto-off timer started (10 min)");
-    }
-}
-
-bool ota_wifi_runtime_active(void)
-{
-    return s_wifi_runtime_started;
-}
-
-/* ---------- Temporary WiFi STA alongside Thread (no reboot) ---------- */
-
-/* Triggered from the management page, which is reachable over Thread/IPv6 and
- * keeps running throughout — WiFi only adds a second route to it.
+/* Triggered from the management page (reachable over Thread/IPv6) or by 6x
+ * clicking any input — the only WiFi path in this firmware, commissioned or
+ * not.
  *
  * WiFi and 802.15.4 share one radio on the ESP32-C6. Espressif's coexistence
  * matrix lists only "WiFi STA + Thread end device" as supported; STA + Thread
- * *router* is documented as unstable and SoftAP + router as unsupported. This
- * path therefore differs from the WiFi setup mode above: STA only, no SoftAP,
- * and the node hands in its router role for the duration. The SRP fallback
+ * *router* is documented as unstable and SoftAP + router as unsupported, so the
+ * node hands in its router role for the duration. The SRP fallback
  * server requires Router/Leader, so it stands down as well and is resumed
  * together with the router role.
+ *
+ * Without stored credentials there is nothing to join, so the window opens a
+ * SoftAP instead. That is the entry point for a device that is not commissioned
+ * yet (no Thread network, hence no dashboard over IPv6).
  *
  * Setup and teardown both happen in this one task, so the window closes on its
  * own without a reboot.
@@ -701,20 +545,20 @@ static void wifi_coex_task(void *arg)
     char ssid[33] = {0}, pass[65] = {0}, url[256] = {0};
     bool from_compile_time = false;
 
-    if (!load_sta_credentials(ssid, sizeof(ssid), pass, sizeof(pass),
-                              url, sizeof(url), &from_compile_time)) {
-        ESP_LOGE(TAG, "wifi_coex: no WiFi credentials stored — nothing to connect to");
-        s_coex_active = false;
-        vTaskDelete(NULL);
-        return;
-    }
+    bool have_creds = load_sta_credentials(ssid, sizeof(ssid), pass, sizeof(pass),
+                                          url, sizeof(url), &from_compile_time);
 
     esp_netif_init();
     esp_event_loop_create_default();
-    if (!esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"))
-        esp_netif_create_default_wifi_sta();
-    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-    if (sta) esp_netif_set_hostname(sta, ota_hostname_get());
+    esp_netif_t *sta = NULL;
+    if (have_creds) {
+        if (!esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"))
+            esp_netif_create_default_wifi_sta();
+        sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (sta) esp_netif_set_hostname(sta, ota_hostname_get());
+    } else if (!esp_netif_get_handle_from_ifkey("WIFI_AP_DEF")) {
+        esp_netif_create_default_wifi_ap();
+    }
 
     /* Stand down as router BEFORE the WiFi radio starts competing, so the mesh
      * sees an orderly downgrade instead of a router that stops responding. */
@@ -748,60 +592,92 @@ static void wifi_coex_task(void *arg)
     }
 #endif
 
-    if (!s_wifi_evt) s_wifi_evt = xEventGroupCreate();
-    xEventGroupClearBits(s_wifi_evt, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
-    s_retry = 0;
-    if (!s_wifi_reconnect_timer)
-        s_wifi_reconnect_timer = xTimerCreate("wifi_rc", pdMS_TO_TICKS(5000),
-                                              pdFALSE, NULL, wifi_reconnect_cb);
+    if (!have_creds) {
+        char ap_ssid[32];
+        build_ap_ssid(ap_ssid, sizeof(ap_ssid));
 
-    esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
-                                        &wifi_event_handler, NULL, &s_coex_evt_any);
-    esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                        &wifi_event_handler, NULL, &s_coex_evt_ip);
+        wifi_config_t apc = {
+            .ap = {
+                .max_connection = 3,
+                .authmode = WIFI_AUTH_OPEN,
+                .channel = 6,
+            },
+        };
+        strncpy((char*)apc.ap.ssid, ap_ssid, sizeof(apc.ap.ssid));
+        apc.ap.ssid_len = strlen(ap_ssid);
 
-    wifi_config_t wcfg = { 0 };
-    strncpy((char*)wcfg.sta.ssid,     ssid, sizeof(wcfg.sta.ssid));
-    strncpy((char*)wcfg.sta.password, pass, sizeof(wcfg.sta.password));
-    wcfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
-    /* Sharing the radio means beacons get missed, so scan every channel and
-     * pick the strongest AP instead of the first hit. */
-    wcfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
-    wcfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+        esp_err_t aerr = esp_wifi_set_mode(WIFI_MODE_AP);
+        if (aerr == ESP_OK) aerr = esp_wifi_set_config(WIFI_IF_AP, &apc);
+        if (aerr == ESP_OK) aerr = esp_wifi_start();
+        if (aerr != ESP_OK) {
+            ESP_LOGE(TAG, "wifi_coex: SoftAP start failed (%s)", esp_err_to_name(aerr));
+            wifi_coex_teardown();
+            s_coex_active = false;
+            vTaskDelete(NULL);
+            return;
+        }
+        web_api_start_httpd();
+        ESP_LOGW(TAG, "wifi_coex: no credentials — SoftAP '%s' open, "
+                      "dashboard on http://192.168.4.1/", ap_ssid);
+    } else {
+        if (!s_wifi_evt) s_wifi_evt = xEventGroupCreate();
+        xEventGroupClearBits(s_wifi_evt, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
+        s_retry = 0;
+        if (!s_wifi_reconnect_timer)
+            s_wifi_reconnect_timer = xTimerCreate("wifi_rc", pdMS_TO_TICKS(5000),
+                                                  pdFALSE, NULL, wifi_reconnect_cb);
 
-    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
-    if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_STA, &wcfg);
-    if (err == ESP_OK) err = esp_wifi_start();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "wifi_coex: WiFi start failed (%s)", esp_err_to_name(err));
-        wifi_coex_teardown();
-        s_coex_active = false;
-        vTaskDelete(NULL);
-        return;
+        esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                            &wifi_event_handler, NULL, &s_coex_evt_any);
+        esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                            &wifi_event_handler, NULL, &s_coex_evt_ip);
+
+        wifi_config_t wcfg = { 0 };
+        strncpy((char*)wcfg.sta.ssid,     ssid, sizeof(wcfg.sta.ssid));
+        strncpy((char*)wcfg.sta.password, pass, sizeof(wcfg.sta.password));
+        wcfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
+        /* Sharing the radio means beacons get missed, so scan every channel and
+         * pick the strongest AP instead of the first hit. */
+        wcfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+        wcfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+
+        esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
+        if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_STA, &wcfg);
+        if (err == ESP_OK) err = esp_wifi_start();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "wifi_coex: WiFi start failed (%s)", esp_err_to_name(err));
+            wifi_coex_teardown();
+            s_coex_active = false;
+            vTaskDelete(NULL);
+            return;
+        }
+        /* Modem sleep leaves the radio to Thread between WiFi beacons. */
+        esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+        ESP_LOGW(TAG, "wifi_coex: STA-only connecting to '%s' (source: %s), Thread stays up",
+                 ssid, from_compile_time ? "compile-time" : "NVS");
+
+        EventBits_t bits = xEventGroupWaitBits(s_wifi_evt,
+                                               WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+                                               pdFALSE, pdFALSE,
+                                               pdMS_TO_TICKS(WIFI_COEX_CONNECT_MS));
+        if (!(bits & WIFI_CONNECTED_BIT)) {
+            ESP_LOGE(TAG, "wifi_coex: no connection within %d s — closing the window early",
+                     WIFI_COEX_CONNECT_MS / 1000);
+            wifi_coex_teardown();
+            s_coex_active = false;
+            vTaskDelete(NULL);
+            return;
+        }
+
+        esp_netif_ip_info_t ip = { 0 };
+        if (sta && esp_netif_get_ip_info(sta, &ip) == ESP_OK)
+            ESP_LOGW(TAG, "wifi_coex: connected, dashboard also on http://" IPSTR "/",
+                     IP2STR(&ip.ip));
+        if (from_compile_time) ota_save_credentials(ssid, pass, url);
+        /* Over Thread the dashboard is normally already up; on a device that is
+         * not commissioned yet this is its first start. */
+        web_api_start_httpd();
     }
-    /* Modem sleep leaves the radio to Thread between WiFi beacons. */
-    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
-    ESP_LOGW(TAG, "wifi_coex: STA-only connecting to '%s' (source: %s), Thread stays up",
-             ssid, from_compile_time ? "compile-time" : "NVS");
-
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_evt,
-                                           WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-                                           pdFALSE, pdFALSE,
-                                           pdMS_TO_TICKS(WIFI_COEX_CONNECT_MS));
-    if (!(bits & WIFI_CONNECTED_BIT)) {
-        ESP_LOGE(TAG, "wifi_coex: no connection within %d s — closing the window early",
-                 WIFI_COEX_CONNECT_MS / 1000);
-        wifi_coex_teardown();
-        s_coex_active = false;
-        vTaskDelete(NULL);
-        return;
-    }
-
-    esp_netif_ip_info_t ip = { 0 };
-    if (sta && esp_netif_get_ip_info(sta, &ip) == ESP_OK)
-        ESP_LOGW(TAG, "wifi_coex: connected, dashboard also on http://" IPSTR "/",
-                 IP2STR(&ip.ip));
-    if (from_compile_time) ota_save_credentials(ssid, pass, url);
 
     int last_logged = -1;
     while (esp_timer_get_time() < s_coex_deadline_us) {
@@ -821,11 +697,6 @@ static void wifi_coex_task(void *arg)
 
 esp_err_t ota_wifi_coex_start(void)
 {
-    if (s_wifi_runtime_started) {
-        ESP_LOGW(TAG, "wifi_coex: WiFi setup mode already owns the radio");
-        return ESP_ERR_INVALID_STATE;
-    }
-
     /* Pressing again while the window is open simply extends it. */
     s_coex_deadline_us = esp_timer_get_time() + (int64_t)WIFI_COEX_WINDOW_US;
     if (s_coex_active) {

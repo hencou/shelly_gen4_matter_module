@@ -483,9 +483,6 @@ static esp_err_t api_commission_post(httpd_req_t *req)
     erase_nvs_namespace("chip-kvs");
     erase_nvs_namespace("chip-config");
     erase_nvs_namespace("chip-counters");
-    /* Signal smart boot to stay in BLE commissioning mode after reboot
-     * instead of falling back to WiFi setup mode. */
-    ota_commission_pending_set(true);
     vTaskDelay(pdMS_TO_TICKS(500));
     esp_restart();
     return ESP_OK;

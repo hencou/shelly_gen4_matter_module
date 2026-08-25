@@ -292,43 +292,12 @@ extern "C" void app_main(void)
         ESP_LOGI(TAG, "BOOT-STEP: status_led -> SLOW_BLINK (not commissioned)");
     }
 
-    /* Smart boot: decide between WiFi-setup mode and BLE-commissioning mode.
-     *
-     * Not commissioned + no scripts → WiFi setup mode:
-     *   User needs the management dashboard to configure endpoints/scripts.
-     *   Disable BLE advertising (radio conflict) and start WiFi.
-     *
-     * Not commissioned + scripts configured → BLE commissioning mode:
-     *   User has set up endpoints via the dashboard and rebooted.
-     *   Let BLE advertising run so the phone can discover and commission.
-     *
-     * Commissioned → normal operation:
-     *   6× press opens a 10-minute WiFi window next to Thread. */
-    if (!commissioned) {
-        bool has_slots = false;
-        for (int i = 0; i < SCRIPT_MAX_SLOTS; i++) {
-            if (slot_types[i] != SLOT_TYPE_NONE) { has_slots = true; break; }
-        }
-        /* Commission mode just cleared the fabrics and rebooted: the user
-         * explicitly wants to re-pair, so keep BLE advertising regardless of
-         * whether scripts are configured. Clear the flag so a later reboot
-         * without pairing returns to the normal WiFi-setup behaviour. */
-        bool commission_pending = ota_commission_pending_get();
-        if (commission_pending) {
-            ota_commission_pending_set(false);
-            ESP_LOGI(TAG, "Not commissioned, commission mode pending — BLE commissioning mode");
-        } else if (!has_slots) {
-            ESP_LOGI(TAG, "Not commissioned, no scripts — WiFi setup mode (BLE off)");
-            CHIP_ERROR cerr =
-                chip::DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(false);
-            if (cerr != CHIP_NO_ERROR) {
-                ESP_LOGE(TAG, "cannot stop BLE advertising: %" CHIP_ERROR_FORMAT, cerr.Format());
-            }
-            ota_enable_wifi_runtime();
-        } else {
-            ESP_LOGI(TAG, "Not commissioned, scripts configured — BLE commissioning mode");
-        }
-    }
+    /* No WiFi at boot in either state: not commissioned means BLE advertising
+     * for pairing, commissioned means Thread. Endpoints can be configured on the
+     * dashboard afterwards, which is reachable over Thread and — in both states
+     * — through the 10-minute WiFi window (6× press). */
+    ESP_LOGI(TAG, "%s", commissioned ? "Commissioned — Thread mode"
+                                     : "Not commissioned — BLE commissioning mode");
 
     ESP_LOGI(TAG, "Shelly 1 Gen4 Matter Switch running");
 }
