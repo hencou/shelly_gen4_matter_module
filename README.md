@@ -245,14 +245,15 @@ therefore:
 
 - starts WiFi as STA (SoftAP when there are no credentials, or when they fail);
 - keeps Thread up, but gives up the **router role** (`otThreadSetRouterEligible(false)`): no routing for other nodes, no children;
-- in the SoftAP fallback additionally makes Thread a **sleepy child** (`mRxOnWhenIdle=false`, 3 s parent poll). A station has an AP buffering frames for it while the radio serves 802.15.4, a SoftAP has nothing of the kind: with 802.15.4 receiving all the time, clients associate but never get a DHCP lease. Thread stays attached, but mesh traffic is as slow as the poll period until the window closes;
+- in the SoftAP fallback additionally makes Thread a **sleepy child** (`mRxOnWhenIdle=false`, 3 s parent poll). A station has an AP buffering frames for it while the radio serves 802.15.4, a SoftAP has nothing of the kind: with 802.15.4 receiving all the time, clients associate but never get a DHCP lease. Thread stays attached, but mesh traffic is as slow as the poll period until the window closes. Sleepy mode also drops the FTD role and full network data in the same link mode, because OpenThread refuses rx-off-when-idle on a full Thread device. If the stack still refuses, Thread goes **down** for the rest of the window and comes back at teardown: an unreachable module is worse than a Thread outage that ends by itself;
 - re-arms the coexistence arbiter (`esp_coex_wifi_i154_enable()`) before **every** `esp_wifi_start()`, because stopping WiFi hands the radio back to 802.15.4 — the SoftAP fallback would otherwise run without airtime;
 - stands down the **SRP fallback server**, which requires Router/Leader;
 - shares the radio, so expect more Thread packet loss while WiFi is busy.
 
 All of that is restored automatically when the window closes — no reboot. If
 Thread detaches while the window is open, the Thread watchdog closes the window
-immediately: Thread wins over temporary WiFi. The current state is visible on the
+immediately: Thread wins over temporary WiFi — unless the SoftAP fallback took
+Thread down deliberately, in which case the detached state is expected. The current state is visible on the
 **Hardware** tab (*Temporary WiFi*).
 
 > Not hardware-verified: coexistence stability only shows up under real WiFi
@@ -473,7 +474,7 @@ The relay functions take an **optional 1-based channel** argument (`1` = relay 1
 |---|---|---|---|
 | **Not commissioned** | OFF | ON (BLE commissioning) | After flash or factory reset |
 | **Commissioned** (normal) | OFF | ON (Thread active) | Dashboard over Thread |
-| **Temporary WiFi** (management) | ON — STA, SoftAP when STA fails | Thread active as End Device (no router role, no SRP fallback; sleepy child during SoftAP) | "Enable WiFi 10 min" button or 6× press — no reboot, restores itself after 10 min |
+| **Temporary WiFi** (management) | ON — STA, SoftAP when STA fails | Thread active as End Device (no router role, no SRP fallback; sleepy child during SoftAP, or Thread down if sleepy is refused) | "Enable WiFi 10 min" button or 6× press — no reboot, restores itself after 10 min |
 
 ## Status LED
 

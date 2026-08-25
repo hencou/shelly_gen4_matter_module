@@ -97,8 +97,15 @@ esp_err_t matter_thread_router_eligible_set(bool eligible);
  * lost. Turning rx-off-when-idle on makes the node a sleepy child that only
  * wakes to poll its parent, which frees the radio for the SoftAP while Thread
  * stays attached (at the cost of poll-period latency). Requires the router role
- * to be given up first. */
+ * to be given up first, and gives up the FTD role for the duration: OpenThread
+ * refuses rx-off-when-idle on a full Thread device. */
 esp_err_t matter_thread_sleepy_set(bool sleepy, uint32_t poll_period_ms);
+
+/* Bring the Thread interface up or down at runtime. Last resort for the SoftAP
+ * window: without an 802.15.4 stack that yields the radio the AP cannot serve
+ * its clients, and an unreachable module is worse than a Thread outage that
+ * ends with the window. */
+esp_err_t matter_thread_enabled_set(bool enabled);
 
 /* Spike: log the device's Thread unicast IPv6 addresses (OMR / mesh-local /
  * link-local) so the management page can be reached over IPv6/Thread from a

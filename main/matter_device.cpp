@@ -1164,6 +1164,13 @@ static void thread_watchdog_cb(void *)
         return;
     }
 
+    /* The SoftAP fallback may hold Thread down on purpose to give the AP its
+     * airtime; that is not a fault and the window restores it itself. */
+    if (ota_wifi_coex_thread_parked()) {
+        s_twdg_detached_ticks = 0;
+        return;
+    }
+
     s_twdg_detached_ticks++;
     ESP_LOGW(TAG, "Thread detached — watchdog tick %d", s_twdg_detached_ticks);
 
@@ -1455,6 +1462,11 @@ extern "C" esp_err_t matter_thread_sleepy_set(bool sleepy, uint32_t poll_period_
     } else {
         otLinkModeConfig mode = otThreadGetLinkMode(instance);
         mode.mRxOnWhenIdle = !sleepy;
+        /* OpenThread rejects rx-off-when-idle on a full Thread device with
+         * OT_ERROR_INVALID_ARGS, so a sleepy node must give up the FTD role in
+         * the same link mode and stop asking for full network data. */
+        mode.mDeviceType   = !sleepy;
+        mode.mNetworkData  = !sleepy;
         otError err = otThreadSetLinkMode(instance, mode);
         if (err == OT_ERROR_NONE && sleepy)
             err = otLinkSetPollPeriod(instance, poll_period_ms);
@@ -1471,6 +1483,23 @@ extern "C" esp_err_t matter_thread_sleepy_set(bool sleepy, uint32_t poll_period_
     return ret;
 #else
     (void)sleepy; (void)poll_period_ms;
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
+extern "C" esp_err_t matter_thread_enabled_set(bool enabled)
+{
+#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
+    CHIP_ERROR err = chip::DeviceLayer::ThreadStackMgr().SetThreadEnabled(enabled);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Thread interface %s failed: %" CHIP_ERROR_FORMAT,
+                 enabled ? "up" : "down", err.Format());
+        return ESP_FAIL;
+    }
+    ESP_LOGW(TAG, "Thread interface -> %s", enabled ? "up" : "down");
+    return ESP_OK;
+#else
+    (void)enabled;
     return ESP_ERR_NOT_SUPPORTED;
 #endif
 }

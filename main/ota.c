@@ -362,6 +362,8 @@ static volatile int64_t s_coex_deadline_us = 0;
 static bool s_coex_wifi_inited = false;
 static esp_event_handler_instance_t s_coex_evt_any = NULL;
 static esp_event_handler_instance_t s_coex_evt_ip  = NULL;
+/* Set when the SoftAP could only be served by taking Thread down entirely. */
+static bool s_coex_thread_down = false;
 
 /* Give the radio and the Thread role back. Safe to call after a partial start. */
 static void wifi_coex_teardown(void)
@@ -391,6 +393,10 @@ static void wifi_coex_teardown(void)
 #endif
     }
 
+    if (s_coex_thread_down) {
+        matter_thread_enabled_set(true);
+        s_coex_thread_down = false;
+    }
     matter_thread_sleepy_set(false, 0);
     matter_thread_router_eligible_set(true);
     matter_srp_fallback_pause(false);
@@ -456,8 +462,14 @@ static esp_err_t wifi_coex_start_ap(void)
     /* Unlike a station, a SoftAP has no parent buffering frames for it while
      * the shared radio serves 802.15.4, so an always-receiving Thread child
      * starves it: clients associate but never get a DHCP lease. Poll-driven
-     * sleepy mode hands that airtime to the AP and keeps Thread attached. */
-    matter_thread_sleepy_set(true, WIFI_COEX_AP_POLL_MS);
+     * sleepy mode hands that airtime to the AP and keeps Thread attached; if the
+     * stack will not go sleepy, an unreachable module is worse than a Thread
+     * outage that ends with the window, so 802.15.4 goes down instead. */
+    if (matter_thread_sleepy_set(true, WIFI_COEX_AP_POLL_MS) != ESP_OK) {
+        ESP_LOGW(TAG, "wifi_coex: Thread refused sleepy mode — taking Thread down "
+                      "for the SoftAP window");
+        s_coex_thread_down = (matter_thread_enabled_set(false) == ESP_OK);
+    }
 
     esp_err_t err = esp_wifi_set_mode(WIFI_MODE_AP);
     if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_AP, &apc);
@@ -466,7 +478,6 @@ static esp_err_t wifi_coex_start_ap(void)
     if (err == ESP_OK) err = esp_wifi_start();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "wifi_coex: SoftAP start failed (%s)", esp_err_to_name(err));
-        matter_thread_sleepy_set(false, 0);
         return err;
     }
     /* A station attempt left modem sleep on; an AP must stay awake for its
@@ -477,9 +488,11 @@ static esp_err_t wifi_coex_start_ap(void)
     /* Espressif documents SoftAP next to 802.15.4 as limited even for an end
      * device (a connected client is their "C1" cell), so Thread traffic gets
      * slower while a browser is talking to the AP. */
-    ESP_LOGW(TAG, "wifi_coex: SoftAP '%s' open, dashboard on http://192.168.4.1/ "
-                  "(Thread polls its parent meanwhile, so mesh traffic is slower)",
-             ap_ssid);
+    ESP_LOGW(TAG, "wifi_coex: SoftAP '%s' open, dashboard on http://192.168.4.1/ (%s)",
+             ap_ssid,
+             s_coex_thread_down ? "Thread is down until the window closes"
+                                : "Thread polls its parent meanwhile, so mesh "
+                                  "traffic is slower");
     return ESP_OK;
 }
 
@@ -632,6 +645,11 @@ esp_err_t ota_wifi_coex_stop(void)
     s_coex_deadline_us = 0;
     ESP_LOGW(TAG, "wifi_coex: stop requested");
     return ESP_OK;
+}
+
+bool ota_wifi_coex_thread_parked(void)
+{
+    return s_coex_thread_down;
 }
 
 int ota_wifi_coex_seconds_left(void)
