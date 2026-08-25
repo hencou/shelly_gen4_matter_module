@@ -217,14 +217,14 @@ needs no border-router glue at all.
 
 #### Switch to WiFi for faster management
 
-Three buttons on the dashboard (**WiFi & OTA** tab) — handy for hard-to-reach
-devices you can only reach over Thread:
+**Enable WiFi 10 min** on the dashboard (**WiFi & OTA** tab) joins WiFi as a
+**station** next to a running Thread network, **without a reboot**, and switches
+WiFi off again after 10 minutes. Pressing it again extends the window; pressing
+it while the window is open closes it early. Needs saved WiFi credentials (no
+SoftAP in this mode).
 
-- **Enable WiFi 10 min** — joins WiFi as a **station** next to a running Thread network, **without a reboot**, and switches WiFi off again after 10 minutes. Pressing it again extends the window; pressing it while the window is open closes it early. Needs saved WiFi credentials (no SoftAP in this mode).
-- **Restart to WiFi mode** — reboots into WiFi (STA if credentials are saved, otherwise the `shelly-cfg-XXXX` SoftAP on `192.168.4.1`) and serves the dashboard there. Matter/Thread stays down while in this mode. After **10 minutes** it automatically reboots back to Thread mode, so you never lose the device permanently.
-- **Restart to Thread mode** — reboots straight back into normal Matter-over-Thread operation.
-
-The physical shortcut still works too: **press any button 6× rapidly** (within 2.5 seconds) to disable Thread and start WiFi in APSTA mode at runtime (AP `shelly-cfg-XXXX` on `192.168.4.1`, plus STA if credentials are saved). Use that when Thread is broken and the dashboard is unreachable.
+The physical shortcut does exactly the same: **press any button 6× rapidly**
+(within 2.5 seconds). Use that when the dashboard is unreachable over Thread.
 
 ##### What temporary WiFi costs while it is open
 
@@ -453,9 +453,7 @@ The relay functions take an **optional 1-based channel** argument (`1` = relay 1
 | **Factory reset** (no scripts) | ON — STA + AP | OFF | After flash or factory reset |
 | **Configured** (scripts, no fabrics) | OFF | ON (BLE commissioning) | After configuring endpoints + reboot |
 | **Commissioned** (normal) | OFF | ON (Thread active) | After commissioning |
-| **6× press** (management) | ON — APSTA mode | Thread disabled | Press any button 6× rapidly |
-| **WiFi mode** (management) | ON — STA or AP | Thread disabled | "Restart to WiFi mode" button (10 min, then back to Thread) |
-| **Temporary WiFi** (management) | ON — STA only | Thread active as End Device (no router role, no SRP fallback) | "Enable WiFi 10 min" button — no reboot, restores itself after 10 min |
+| **Temporary WiFi** (management) | ON — STA only | Thread active as End Device (no router role, no SRP fallback) | "Enable WiFi 10 min" button or 6× press — no reboot, restores itself after 10 min |
 
 ## Status LED
 

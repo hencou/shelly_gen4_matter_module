@@ -64,9 +64,6 @@ void matter_update_power_ep(uint16_t endpoint_id, float voltage_v, float current
 /* Update relay OnOff attribute (report to HA). ch = 0-based relay channel. */
 void matter_update_relay_onoff(int ch, bool on);
 
-/* Disable Thread radio so WiFi can use the 2.4 GHz radio exclusively. */
-void matter_disable_thread(void);
-
 /* Start the Thread connectivity watchdog. Recovers a node that gets stuck
  * DETACHED (unreachable over Thread) without a manual reboot: soft-toggles the
  * Thread interface after ~2 min, reboots after ~5 min. No-op while runtime

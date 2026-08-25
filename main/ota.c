@@ -60,7 +60,6 @@ static const char *TAG = "ota";
 #define NVS_KEY_SRP         "srp"
 #define NVS_KEY_HOSTNAME    "hostname"
 #define NVS_KEY_COMMISSION  "comm_pend"
-#define NVS_KEY_WIFI_MODE   "wifi_mode"
 
 /* Runtime bench mode — initialised from NVS in bench_mode_init(). */
 int g_bench_mode = BENCH_MODE;
@@ -285,33 +284,6 @@ void ota_request_ota_reboot(void)
         nvs_commit(h);
         nvs_close(h);
     }
-    esp_restart();
-}
-
-/* ---------- WiFi management mode flag ---------- */
-
-static bool wifi_mode_read_and_clear(void)
-{
-    nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return false;
-    uint8_t v = 0;
-    nvs_get_u8(h, NVS_KEY_WIFI_MODE, &v);
-    nvs_set_u8(h, NVS_KEY_WIFI_MODE, 0);
-    nvs_commit(h);
-    nvs_close(h);
-    return v != 0;
-}
-
-void ota_request_wifi_mode_reboot(void)
-{
-    nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_u8(h, NVS_KEY_WIFI_MODE, 1);
-        nvs_commit(h);
-        nvs_close(h);
-    }
-    ESP_LOGW(TAG, "WiFi management mode requested -> rebooting");
-    vTaskDelay(pdMS_TO_TICKS(200));
     esp_restart();
 }
 
@@ -887,62 +859,10 @@ int ota_wifi_coex_seconds_left(void)
     return (left > 0) ? (int)(left / 1000000) : 0;
 }
 
-/* ---------- WiFi management mode boot path ---------- */
-
-/* Brings WiFi up (STA if credentials exist, otherwise SoftAP) and serves the
- * management dashboard. Never returns: it reboots back to Thread/Matter after
- * the 10-minute timeout (shared with OTA mode via wait_for_upload_or_timeout).
- * Matter/Thread is intentionally not started while in this mode. */
-static void enter_wifi_mgmt_mode(void)
-{
-    ESP_LOGW(TAG, "WiFi management mode — Matter NOT started, WiFi up for 10 min");
-
-    button_driver_init(ota_mode_button_cb);
-    /* Matter is not running here, so the sensor tasks get no callbacks — but the
-     * dashboard reads their cached values, which stay empty unless the tasks
-     * run. */
-    sensors_init(NULL, NULL, NULL);
-    status_led_set(STATUS_LED_FAST_BLINK);
-
-    char ssid[33] = {0}, pass[65] = {0}, url[256] = {0};
-    bool have_creds = ota_load_credentials(ssid, sizeof(ssid),
-                                           pass, sizeof(pass),
-                                           url,  sizeof(url));
-
-#ifdef DEFAULT_WIFI_SSID
-#ifndef DEFAULT_WIFI_PASS
-#define DEFAULT_WIFI_PASS ""
-#endif
-    if (!have_creds) {
-        strncpy(ssid, DEFAULT_WIFI_SSID, sizeof(ssid) - 1);
-        strncpy(pass, DEFAULT_WIFI_PASS, sizeof(pass) - 1);
-        have_creds = strlen(ssid) > 0;
-    }
-#endif
-
-    if (have_creds) {
-        if (wifi_init_sta(ssid, pass) == ESP_OK) {
-            web_api_start_httpd();
-            ESP_LOGW(TAG, "WiFi management mode: STA connected, dashboard on local IP");
-            wait_for_upload_or_timeout();  /* 10 min, then reboots to Thread */
-        }
-        ESP_LOGW(TAG, "WiFi management mode: STA failed, falling back to SoftAP");
-        esp_wifi_stop();
-        esp_wifi_deinit();
-    }
-
-    run_softap();  /* SoftAP + dashboard + 10 min timeout, never returns */
-}
-
 /* ---------- Public entrypoints ---------- */
 
 void ota_handle_pending(void)
 {
-    if (wifi_mode_read_and_clear()) {
-        enter_wifi_mgmt_mode();  /* never returns (reboots after 10 min) */
-        return;
-    }
-
     if (!ota_pending_read_and_clear()) {
         return;
     }

@@ -1133,17 +1133,6 @@ extern "C" void matter_update_relay_onoff(int ch, bool on)
     }
 }
 
-extern "C" void matter_disable_thread(void)
-{
-#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
-    ESP_LOGW(TAG, "Disabling Thread to free 2.4 GHz radio for WiFi");
-    CHIP_ERROR err = chip::DeviceLayer::ThreadStackMgr().SetThreadEnabled(false);
-    if (err != CHIP_NO_ERROR) {
-        ESP_LOGE(TAG, "SetThreadEnabled(false): %" CHIP_ERROR_FORMAT, err.Format());
-    }
-#endif
-}
-
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
 /* Thread connectivity watchdog. OpenThread normally re-attaches on its own, but
  * on ESP32-C6 + Matter a node can occasionally stay DETACHED after a partition/

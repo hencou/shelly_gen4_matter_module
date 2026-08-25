@@ -51,11 +51,11 @@ void bench_mode_init(void);
 #define LONG_PRESS_MS       CONFIG_LONG_PRESS_MS
 #define OCC_DEBOUNCE_MS     CONFIG_OCC_DEBOUNCE_MS
 #define TEMP_REPORT_INT_S   CONFIG_TEMP_REPORT_INTERVAL_S
-/* 6x click = WiFi enable (universal on all 3 inputs):
- *   - Matter mode + 6x  -> enable WiFi alongside Thread (non-persistent)
- *   - OTA mode    + 6x  -> ignored
- * WiFi allows configuration via management dashboard while Thread
- * stays active. WiFi is lost on reboot (only in RAM). */
+/* 6x click = temporary WiFi (universal on all 3 inputs):
+ *   - Matter mode + 6x  -> WiFi station next to Thread for 10 minutes, no
+ *                          reboot; same action as the button on the management
+ *                          page (ota_wifi_coex_start)
+ *   - OTA mode    + 6x  -> ignored */
 #define MODE_TOGGLE_CLICKS      6
 #define MODE_TOGGLE_WINDOW_MS   2500
 /* Double-click detection: after a short press release, wait this long
@@ -75,7 +75,7 @@ void bench_mode_init(void);
  *   - SHORT_LONG_STOP   -> Matter ColorControl StopMoveStep
  *   - CONTACT_CLOSED    -> Matter On to state-follow bound devices
  *   - CONTACT_OPEN      -> Matter Off to state-follow bound devices
- *   - 6x click          -> enable WiFi alongside Thread (non-persistent)
+ *   - 6x click          -> WiFi next to Thread for 10 min (no reboot)
  *
  * GPIOs are taken from the active hardware profile (see hw_config.c); the
  * GPIOs noted below are the Shelly 1 Gen4 defaults.

@@ -97,9 +97,8 @@ extern "C" void on_button_event(input_id_t id, button_event_t evt)
     ESP_LOGI(TAG, "button id=%d evt=%d", id, evt);
 
     if (evt == BTN_EVT_MODE_TOGGLE) {
-        ESP_LOGW(TAG, "MODE_TOGGLE from input %d -> disabling Thread, enabling WiFi", id);
-        matter_disable_thread();
-        ota_enable_wifi_runtime();
+        ESP_LOGW(TAG, "MODE_TOGGLE from input %d -> WiFi for 10 min next to Thread", id);
+        ota_wifi_coex_start();
         return;
     }
 
@@ -304,7 +303,7 @@ extern "C" void app_main(void)
      *   Let BLE advertising run so the phone can discover and commission.
      *
      * Commissioned → normal operation:
-     *   6× press enables WiFi temporarily (Thread disabled). */
+     *   6× press opens a 10-minute WiFi window next to Thread. */
     if (!commissioned) {
         bool has_slots = false;
         for (int i = 0; i < SCRIPT_MAX_SLOTS; i++) {

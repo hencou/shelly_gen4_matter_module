@@ -13,11 +13,10 @@ extern "C" {
  *
  * Two WiFi paths:
  *
- * A) Runtime WiFi enable (6x clicks in Matter mode):
- *   - WiFi starts alongside Thread (both active, non-persistent).
- *   - If STA connection succeeds: management dashboard reachable.
- *   - If STA fails: WiFi credentials wiped, AP mode started.
- *   - After reboot: WiFi is OFF again (only in RAM, not NVS flag).
+ * A) Temporary WiFi next to Thread (6x clicks, or the button on the management
+ *    page): STA only, no reboot, closes itself after 10 minutes. See
+ *    ota_wifi_coex_start(). WiFi setup mode (SoftAP) is only used while the
+ *    device is not commissioned yet.
  *
  * B) Dedicated OTA mode (via ota_request_at_next_boot):
  *   1) NVS flag set + reboot.
@@ -40,16 +39,9 @@ void ota_request_at_next_boot(void);
 /* Set OTA pending flag and reboot (used by web /ota POST handler). */
 void ota_request_ota_reboot(void);
 
-/* WiFi management mode: set an NVS flag and reboot. On the next boot the device
- * brings up WiFi (STA if credentials are stored, otherwise a SoftAP) and serves
- * the management dashboard, without starting Matter/Thread. After 10 minutes it
- * reboots back to normal Thread/Matter mode. Meant to be triggered remotely from
- * the management page over Thread, so a hard-to-reach device can be managed over
- * a faster WiFi link without the physical 6x button press. */
-void ota_request_wifi_mode_reboot(void);
-
-/* Enable WiFi alongside Thread at runtime (non-persistent, lost on reboot).
- * If STA connection fails, WiFi credentials are wiped and AP mode is started. */
+/* WiFi setup mode: SoftAP (plus STA when credentials are stored) with the
+ * management dashboard, for a device that is not commissioned yet. Matter/Thread
+ * does not run in this mode. */
 void ota_enable_wifi_runtime(void);
 
 /* Temporary WiFi STA *alongside* Thread, without a reboot. Triggered from the
@@ -58,7 +50,7 @@ void ota_enable_wifi_runtime(void);
  * fallback server for the duration, because WiFi and 802.15.4 share one radio
  * and Espressif only documents "STA + Thread end device" as supported. Closes
  * itself after 10 minutes and restores both. Pressing again while the window is
- * open extends it to another 10 minutes.
+ * open extends it to another 10 minutes. Also what 6x clicks on any input do.
  * Returns ESP_ERR_INVALID_STATE when WiFi setup mode already owns the radio. */
 esp_err_t ota_wifi_coex_start(void);
 
@@ -68,9 +60,8 @@ esp_err_t ota_wifi_coex_stop(void);
 /* Seconds left in the temporary WiFi window; 0 when it is not open. */
 int ota_wifi_coex_seconds_left(void);
 
-/* True while runtime WiFi is active (6x press / WiFi setup mode). In this
- * state Thread is intentionally disabled, so the Thread watchdog must not
- * treat "not attached" as a fault. */
+/* True while WiFi setup mode is active. In that state Thread is intentionally
+ * disabled, so the Thread watchdog must not treat "not attached" as a fault. */
 bool ota_wifi_runtime_active(void);
 
 /* Save WiFi creds + URL in NVS (can also be done via web form). */
