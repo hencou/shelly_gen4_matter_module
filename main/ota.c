@@ -484,9 +484,11 @@ static bool load_sta_credentials(char *ssid, size_t ssidlen,
  * server requires Router/Leader, so it stands down as well and is resumed
  * together with the router role.
  *
- * Without stored credentials there is nothing to join, so the window opens a
- * SoftAP instead. That is the entry point for a device that is not commissioned
- * yet (no Thread network, hence no dashboard over IPv6).
+ * Without stored credentials there is nothing to join, and the same goes for
+ * credentials that do not connect, so in both cases the window falls back to a
+ * SoftAP for the rest of the ten minutes. That is the entry point for a device
+ * that is not commissioned yet (no Thread network, hence no dashboard over
+ * IPv6), where closing the window early would leave it unreachable.
  *
  * Setup and teardown both happen in this one task, so the window closes on its
  * own without a reboot.
@@ -539,6 +541,57 @@ static void wifi_coex_teardown(void)
     ESP_LOGW(TAG, "wifi_coex: WiFi off, Thread router role and SRP fallback restored");
 }
 
+/* Drop the station attempt without touching the driver, so the AP fallback can
+ * reuse it. Unregister before esp_wifi_stop(): that emits STA_DISCONNECTED and
+ * the handler would answer it by arming the reconnect timer. */
+static void wifi_coex_sta_stop(void)
+{
+    if (s_coex_evt_any) {
+        esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                              s_coex_evt_any);
+        s_coex_evt_any = NULL;
+    }
+    if (s_coex_evt_ip) {
+        esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                              s_coex_evt_ip);
+        s_coex_evt_ip = NULL;
+    }
+    if (s_wifi_reconnect_timer) xTimerStop(s_wifi_reconnect_timer, 0);
+    esp_wifi_stop();
+}
+
+static esp_err_t wifi_coex_start_ap(void)
+{
+    if (!esp_netif_get_handle_from_ifkey("WIFI_AP_DEF"))
+        esp_netif_create_default_wifi_ap();
+
+    char ap_ssid[32];
+    build_ap_ssid(ap_ssid, sizeof(ap_ssid));
+
+    wifi_config_t apc = {
+        .ap = {
+            .max_connection = 3,
+            .authmode = WIFI_AUTH_OPEN,
+            .channel = 6,
+        },
+    };
+    strncpy((char*)apc.ap.ssid, ap_ssid, sizeof(apc.ap.ssid));
+    apc.ap.ssid_len = strlen(ap_ssid);
+
+    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_AP);
+    if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_AP, &apc);
+    if (err == ESP_OK) err = esp_wifi_start();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "wifi_coex: SoftAP start failed (%s)", esp_err_to_name(err));
+        return err;
+    }
+
+    web_api_start_httpd();
+    ESP_LOGW(TAG, "wifi_coex: SoftAP '%s' open, dashboard on http://192.168.4.1/",
+             ap_ssid);
+    return ESP_OK;
+}
+
 static void wifi_coex_task(void *arg)
 {
     (void)arg;
@@ -556,8 +609,6 @@ static void wifi_coex_task(void *arg)
             esp_netif_create_default_wifi_sta();
         sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
         if (sta) esp_netif_set_hostname(sta, ota_hostname_get());
-    } else if (!esp_netif_get_handle_from_ifkey("WIFI_AP_DEF")) {
-        esp_netif_create_default_wifi_ap();
     }
 
     /* Stand down as router BEFORE the WiFi radio starts competing, so the mesh
@@ -592,34 +643,9 @@ static void wifi_coex_task(void *arg)
     }
 #endif
 
-    if (!have_creds) {
-        char ap_ssid[32];
-        build_ap_ssid(ap_ssid, sizeof(ap_ssid));
+    bool need_ap = !have_creds;
 
-        wifi_config_t apc = {
-            .ap = {
-                .max_connection = 3,
-                .authmode = WIFI_AUTH_OPEN,
-                .channel = 6,
-            },
-        };
-        strncpy((char*)apc.ap.ssid, ap_ssid, sizeof(apc.ap.ssid));
-        apc.ap.ssid_len = strlen(ap_ssid);
-
-        esp_err_t aerr = esp_wifi_set_mode(WIFI_MODE_AP);
-        if (aerr == ESP_OK) aerr = esp_wifi_set_config(WIFI_IF_AP, &apc);
-        if (aerr == ESP_OK) aerr = esp_wifi_start();
-        if (aerr != ESP_OK) {
-            ESP_LOGE(TAG, "wifi_coex: SoftAP start failed (%s)", esp_err_to_name(aerr));
-            wifi_coex_teardown();
-            s_coex_active = false;
-            vTaskDelete(NULL);
-            return;
-        }
-        web_api_start_httpd();
-        ESP_LOGW(TAG, "wifi_coex: no credentials — SoftAP '%s' open, "
-                      "dashboard on http://192.168.4.1/", ap_ssid);
-    } else {
+    if (have_creds) {
         if (!s_wifi_evt) s_wifi_evt = xEventGroupCreate();
         xEventGroupClearBits(s_wifi_evt, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
         s_retry = 0;
@@ -645,38 +671,43 @@ static void wifi_coex_task(void *arg)
         if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_STA, &wcfg);
         if (err == ESP_OK) err = esp_wifi_start();
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "wifi_coex: WiFi start failed (%s)", esp_err_to_name(err));
-            wifi_coex_teardown();
-            s_coex_active = false;
-            vTaskDelete(NULL);
-            return;
-        }
-        /* Modem sleep leaves the radio to Thread between WiFi beacons. */
-        esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
-        ESP_LOGW(TAG, "wifi_coex: STA-only connecting to '%s' (source: %s), Thread stays up",
-                 ssid, from_compile_time ? "compile-time" : "NVS");
+            ESP_LOGE(TAG, "wifi_coex: WiFi start failed (%s) — falling back to SoftAP",
+                     esp_err_to_name(err));
+            wifi_coex_sta_stop();
+            need_ap = true;
+        } else {
+            /* Modem sleep leaves the radio to Thread between WiFi beacons. */
+            esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+            ESP_LOGW(TAG, "wifi_coex: STA-only connecting to '%s' (source: %s), Thread stays up",
+                     ssid, from_compile_time ? "compile-time" : "NVS");
 
-        EventBits_t bits = xEventGroupWaitBits(s_wifi_evt,
-                                               WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-                                               pdFALSE, pdFALSE,
-                                               pdMS_TO_TICKS(WIFI_COEX_CONNECT_MS));
-        if (!(bits & WIFI_CONNECTED_BIT)) {
-            ESP_LOGE(TAG, "wifi_coex: no connection within %d s — closing the window early",
-                     WIFI_COEX_CONNECT_MS / 1000);
-            wifi_coex_teardown();
-            s_coex_active = false;
-            vTaskDelete(NULL);
-            return;
+            EventBits_t bits = xEventGroupWaitBits(s_wifi_evt,
+                                                   WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+                                                   pdFALSE, pdFALSE,
+                                                   pdMS_TO_TICKS(WIFI_COEX_CONNECT_MS));
+            if (bits & WIFI_CONNECTED_BIT) {
+                esp_netif_ip_info_t ip = { 0 };
+                if (sta && esp_netif_get_ip_info(sta, &ip) == ESP_OK)
+                    ESP_LOGW(TAG, "wifi_coex: connected, dashboard also on http://" IPSTR "/",
+                             IP2STR(&ip.ip));
+                if (from_compile_time) ota_save_credentials(ssid, pass, url);
+                /* Over Thread the dashboard is normally already up; on a device
+                 * that is not commissioned yet this is its first start. */
+                web_api_start_httpd();
+            } else {
+                ESP_LOGE(TAG, "wifi_coex: no connection within %d s — falling back to SoftAP",
+                         WIFI_COEX_CONNECT_MS / 1000);
+                wifi_coex_sta_stop();
+                need_ap = true;
+            }
         }
+    }
 
-        esp_netif_ip_info_t ip = { 0 };
-        if (sta && esp_netif_get_ip_info(sta, &ip) == ESP_OK)
-            ESP_LOGW(TAG, "wifi_coex: connected, dashboard also on http://" IPSTR "/",
-                     IP2STR(&ip.ip));
-        if (from_compile_time) ota_save_credentials(ssid, pass, url);
-        /* Over Thread the dashboard is normally already up; on a device that is
-         * not commissioned yet this is its first start. */
-        web_api_start_httpd();
+    if (need_ap && wifi_coex_start_ap() != ESP_OK) {
+        wifi_coex_teardown();
+        s_coex_active = false;
+        vTaskDelete(NULL);
+        return;
     }
 
     int last_logged = -1;

@@ -224,10 +224,12 @@ it while the window is open closes it early.
 The physical shortcut does exactly the same: **press any button 6× rapidly**
 (within 2.5 seconds). Use that when the dashboard is unreachable over Thread.
 
-Both work regardless of commissioning status. Without saved WiFi credentials
-there is nothing to join, so the window opens an **open SoftAP**
-`shelly-cfg-XXXX` with the dashboard on `http://192.168.4.1/` instead — that is
-how you reach a module that has never been commissioned.
+Both work regardless of commissioning status. Without saved WiFi credentials —
+or when they do not connect within a minute — the window switches to an **open
+SoftAP** `shelly-cfg-XXXXXX` with the dashboard on `http://192.168.4.1/` for the
+remainder of the ten minutes. That is how you reach a module that has never been
+commissioned, and it keeps a module with stale credentials reachable when Thread
+is not configured either.
 
 ##### What temporary WiFi costs while it is open
 
@@ -236,7 +238,7 @@ WiFi and 802.15.4 share one radio on the ESP32-C6, and Espressif documents only
 (SoftAP next to a Thread Router is listed as unsupported). The 10-minute window
 therefore:
 
-- starts WiFi as STA (SoftAP only when no credentials are stored);
+- starts WiFi as STA (SoftAP when there are no credentials, or when they fail);
 - keeps Thread up, but gives up the **router role** (`otThreadSetRouterEligible(false)`): no routing for other nodes, no children;
 - stands down the **SRP fallback server**, which requires Router/Leader;
 - shares the radio, so expect more Thread packet loss while WiFi is busy.
