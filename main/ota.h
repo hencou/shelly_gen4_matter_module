@@ -46,6 +46,10 @@ esp_err_t ota_wifi_coex_stop(void);
 /* Seconds left in the temporary WiFi window; 0 when it is not open. */
 int ota_wifi_coex_seconds_left(void);
 
+/* True while the SoftAP fallback keeps Thread down on purpose, so a detached
+ * Thread is expected and must not be treated as a fault. */
+bool ota_wifi_coex_thread_parked(void);
+
 /* Save WiFi creds + URL in NVS (can also be done via web form). */
 esp_err_t ota_save_credentials(const char *ssid, const char *password,
                                const char *firmware_url);
