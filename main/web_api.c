@@ -906,11 +906,24 @@ static esp_err_t ota_post(httpd_req_t *req)
     }
     ota_save_credentials(ssid, pass, url);
     if (hostname[0]) ota_hostname_set(hostname);
-    const char *msg = "Saved. Device restarting into OTA mode on your WiFi...\n";
-    httpd_resp_send(req, msg, HTTPD_RESP_USE_STRLEN);
-    vTaskDelay(pdMS_TO_TICKS(500));
-    ota_request_ota_reboot();
-    return ESP_OK;
+    /* Stored only. The credentials are picked up by the next temporary WiFi
+     * window, so wrong ones cost a toggle instead of a reboot; the hostname
+     * applies to the DHCP lease of that window. */
+    return httpd_resp_sendstr(req, "Saved. Toggle the WiFi window to connect with these settings.");
+}
+
+static esp_err_t api_ota_url_post(httpd_req_t *req)
+{
+    esp_err_t err = ota_update_from_url();
+    if (err == ESP_ERR_INVALID_STATE) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_sendstr(req, "No firmware URL saved");
+    }
+    if (err != ESP_OK) {
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        return httpd_resp_sendstr(req, esp_err_to_name(err));
+    }
+    return httpd_resp_sendstr(req, "Fetching firmware, the device reboots when it succeeds");
 }
 
 /* ---------- Script API handlers (with Lua syntax validation) ---------- */
@@ -1162,7 +1175,7 @@ void web_api_start_httpd(void)
     hc.recv_wait_timeout  = 30;
     hc.send_wait_timeout  = 10;
     hc.max_open_sockets   = 3;
-    hc.max_uri_handlers   = 26;
+    hc.max_uri_handlers   = 27;
     ESP_ERROR_CHECK(httpd_start(&srv, &hc));
 
     httpd_uri_t get_root          = { "/",                  HTTP_GET,    form_get,              NULL };
@@ -1189,6 +1202,7 @@ void web_api_start_httpd(void)
     httpd_uri_t get_log           = { "/api/log",           HTTP_GET,    api_log_get,           NULL };
     httpd_uri_t get_owprobe       = { "/api/owprobe",       HTTP_GET,    api_owprobe_get,       NULL };
     httpd_uri_t post_keepalive    = { "/api/keepalive",     HTTP_POST,   api_keepalive_post,    NULL };
+    httpd_uri_t post_ota_url      = { "/api/ota-url",       HTTP_POST,   api_ota_url_post,      NULL };
 
     httpd_register_uri_handler(srv, &get_root);
     httpd_register_uri_handler(srv, &post_upload);
@@ -1214,6 +1228,7 @@ void web_api_start_httpd(void)
     httpd_register_uri_handler(srv, &get_log);
     httpd_register_uri_handler(srv, &get_owprobe);
     httpd_register_uri_handler(srv, &post_keepalive);
+    httpd_register_uri_handler(srv, &post_ota_url);
 
     s_srv = srv;
 }

@@ -14,9 +14,8 @@ extern "C" {
  * - LONG_PRESS_START fires when held > LONG_PRESS_MS
  * - LONG_PRESS_STOP  fires on release after a LONG_PRESS_START
  * - MODE_TOGGLE      fires after MODE_TOGGLE_CLICKS (6) taps in MODE_TOGGLE_WINDOW_MS
- *                    Universal across all 3 inputs. In Matter mode: enables WiFi
- *                    alongside Thread for configuration (non-persistent, lost on reboot).
- *                    In OTA mode: ignored.
+ *                    Universal across all 3 inputs. Enables WiFi alongside
+ *                    Thread for configuration (non-persistent, lost on reboot).
  * - CONTACT_CLOSED   fires on every press/close edge (state-following)
  * - CONTACT_OPEN     fires on every release/open edge (state-following)
  *   These two events enable EP5 (state-follow switch): bind EP5 for a

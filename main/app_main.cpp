@@ -174,9 +174,6 @@ extern "C" void app_main(void)
     status_led_init();
     status_led_set(STATUS_LED_FAST_BLINK);  /* boot/init in progress */
 
-    /* WiFi OTA path takes priority: when flag is set, Matter is NOT started */
-    ota_handle_pending();
-
     relay_init();
 
     /* Load script slot types from NVS BEFORE matter_start —

@@ -69,6 +69,7 @@ extern "C" {
 #include <openthread/instance.h>
 #include <openthread/thread.h>
 #include <openthread/ip6.h>
+#include <openthread/link.h>
 #include <openthread/netdata.h>
 #if CONFIG_OPENTHREAD_SRP_CLIENT
 #include <openthread/srp_client.h>
@@ -1439,6 +1440,37 @@ extern "C" esp_err_t matter_thread_router_eligible_set(bool eligible)
     return ret;
 #else
     (void)eligible;
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
+extern "C" esp_err_t matter_thread_sleepy_set(bool sleepy, uint32_t poll_period_ms)
+{
+#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
+    esp_err_t ret = ESP_OK;
+    chip::DeviceLayer::ThreadStackMgr().LockThreadStack();
+    otInstance *instance = esp_openthread_get_instance();
+    if (instance == nullptr) {
+        ret = ESP_ERR_INVALID_STATE;
+    } else {
+        otLinkModeConfig mode = otThreadGetLinkMode(instance);
+        mode.mRxOnWhenIdle = !sleepy;
+        otError err = otThreadSetLinkMode(instance, mode);
+        if (err == OT_ERROR_NONE && sleepy)
+            err = otLinkSetPollPeriod(instance, poll_period_ms);
+        if (err != OT_ERROR_NONE) {
+            ESP_LOGE(TAG, "Thread sleepy(%d) failed: %d", sleepy, err);
+            ret = ESP_FAIL;
+        } else {
+            ESP_LOGW(TAG, "Thread rx-on-when-idle -> %s (role now %d)",
+                     sleepy ? "off, polling parent" : "on",
+                     (int)otThreadGetDeviceRole(instance));
+        }
+    }
+    chip::DeviceLayer::ThreadStackMgr().UnlockThreadStack();
+    return ret;
+#else
+    (void)sleepy; (void)poll_period_ms;
     return ESP_ERR_NOT_SUPPORTED;
 #endif
 }

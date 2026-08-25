@@ -91,6 +91,15 @@ esp_err_t matter_srp_fallback_pause(bool pause);
  * downgrades to Child on false; the node stays attached either way. */
 esp_err_t matter_thread_router_eligible_set(bool eligible);
 
+/* Rx-on-when-idle of the Thread child. A SoftAP has no way to buffer frames
+ * for a radio that is off channel, so an 802.15.4 stack that keeps receiving
+ * all the time starves it: clients associate but their DHCP and IP traffic is
+ * lost. Turning rx-off-when-idle on makes the node a sleepy child that only
+ * wakes to poll its parent, which frees the radio for the SoftAP while Thread
+ * stays attached (at the cost of poll-period latency). Requires the router role
+ * to be given up first. */
+esp_err_t matter_thread_sleepy_set(bool sleepy, uint32_t poll_period_ms);
+
 /* Spike: log the device's Thread unicast IPv6 addresses (OMR / mesh-local /
  * link-local) so the management page can be reached over IPv6/Thread from a
  * browser. matter_thread_addr_log_start() also re-logs every 15 s (the OMR
