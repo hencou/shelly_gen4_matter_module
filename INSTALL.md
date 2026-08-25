@@ -310,7 +310,7 @@ Check in HA → Settings → Devices & Services → Thread → you should see at
 
 If pairing fails:
 - Check that the Shelly booted less than 5 minutes ago (BLE pairing window).
-- Press **6× rapid clicks** on any button → enables WiFi management dashboard. From there you can factory reset to clear Matter NVS and reopen the pairing window.
+- Press **6× rapid clicks** on any button → WiFi joins for 10 minutes next to Thread, so the management dashboard is reachable. From there you can factory reset to clear Matter NVS and reopen the pairing window. Requires WiFi credentials stored in NVS.
 
 ## 8. Pair a KAJPLATS bulb in Matter mode
 
@@ -351,7 +351,7 @@ Press the button → the lamp should respond directly, **without HA in the path*
 ## 10. OTA — firmware updates without UART
 
 1. Build new firmware: `idf.py build`. Place `build/shelly_gen4_matter_module.bin` on a web server reachable from your WiFi network (e.g. HA `/config/www/`).
-2. Press **6× rapidly** on any button → WiFi management dashboard activates.
+2. Press **6× rapidly** on any button → WiFi joins for 10 minutes and the management dashboard becomes reachable (needs stored WiFi credentials; otherwise reach the dashboard over Thread).
 3. Navigate to the WiFi tab in the dashboard → enter SSID + password + OTA URL.
 4. The device downloads and flashes the new firmware, then reboots.
 5. For subsequent OTA updates: 6× press suffices — WiFi credentials are saved in NVS.
@@ -374,7 +374,7 @@ esptool.py -p /dev/ttyUSB0 write_flash 0x0 shelly_stock_backup.bin
 | Lamp responds slowly (>1s) | Thread mesh can recover via rebooting Google TV Streamer; check `chip-tool thread show-state $SWITCH 0`. |
 | Crash at boot after OTA | Bootloader rollback active (see sdkconfig). It automatically falls back to the previous slot. Check your build. |
 | Long-press dimming doesn't work | Binding must include **cluster 8** (LevelControl), not just cluster 6. |
-| WiFi AP not visible after 6× press | Ensure 6 rapid clicks within ~3s. If Thread is active (commissioned device), Thread is automatically disabled to free the radio. Try again after reboot. |
+| Not reachable over WiFi after 6× press | Ensure 6 rapid clicks within ~2.5s. This mode is station-only: no SoftAP, so WiFi credentials must be stored in NVS. Set them via the dashboard over Thread. |
 | `esptool` timeout on `/dev/ttyUSB0` | Pin 6 (GPIO0) was not low at power-on. Bridge Pin 6 ↔ Pin 7 (GND) again and re-plug USB-UART. See chapter 4. |
 | Shelly boots into flash mode again after flash | Pin 6 ↔ Pin 7 bridge is still connected. Remove the jumper and power-cycle. |
 | Accidentally applied 5V to Pin 4 | Module is most likely dead. No rescue possible — replace only. Always use 3.3V. |

@@ -430,22 +430,10 @@ static esp_err_t api_restart_post(httpd_req_t *req)
     return ESP_OK;
 }
 
-/* Restart into WiFi management mode: WiFi comes up (STA or SoftAP) with the
- * dashboard, Matter/Thread stays down, and after 10 minutes the device reboots
- * back to Thread mode. Lets a hard-to-reach device be switched to WiFi remotely
- * over Thread, without the physical 6x button press. */
-static esp_err_t api_wifi_mode_post(httpd_req_t *req)
-{
-    httpd_resp_sendstr(req, "OK");
-    ESP_LOGW(TAG, "Restart to WiFi mode requested via web");
-    vTaskDelay(pdMS_TO_TICKS(500));
-    ota_request_wifi_mode_reboot();
-    return ESP_OK;
-}
-
 /* Temporary WiFi STA alongside Thread, without a reboot. Toggles the window:
- * open it for 10 minutes, or close it early when it is already open. Unlike
- * /api/wifi-mode this keeps Matter and the Thread management page running. */
+ * open it for 10 minutes, or close it early when it is already open. Matter and
+ * the Thread management page keep running throughout. Same action as 6x clicks
+ * on any input. */
 static esp_err_t api_wifi_coex_post(httpd_req_t *req)
 {
     if (ota_wifi_coex_seconds_left() > 0) {
@@ -1185,7 +1173,6 @@ void web_api_start_httpd(void)
     httpd_uri_t get_hw_config     = { "/api/hw-config",     HTTP_GET,    api_hw_config_get,     NULL };
     httpd_uri_t post_hw_config    = { "/api/hw-config",     HTTP_POST,   api_hw_config_post,    NULL };
     httpd_uri_t post_restart      = { "/api/restart",       HTTP_POST,   api_restart_post,      NULL };
-    httpd_uri_t post_wifi_mode    = { "/api/wifi-mode",     HTTP_POST,   api_wifi_mode_post,    NULL };
     httpd_uri_t post_wifi_coex    = { "/api/wifi-coex",     HTTP_POST,   api_wifi_coex_post,    NULL };
     httpd_uri_t post_factory      = { "/api/factory-reset", HTTP_POST,   api_factory_reset_post,NULL };
     httpd_uri_t post_commission   = { "/api/commission",    HTTP_POST,   api_commission_post,   NULL };
@@ -1211,7 +1198,6 @@ void web_api_start_httpd(void)
     httpd_register_uri_handler(srv, &get_hw_config);
     httpd_register_uri_handler(srv, &post_hw_config);
     httpd_register_uri_handler(srv, &post_restart);
-    httpd_register_uri_handler(srv, &post_wifi_mode);
     httpd_register_uri_handler(srv, &post_wifi_coex);
     httpd_register_uri_handler(srv, &post_factory);
     httpd_register_uri_handler(srv, &post_commission);
