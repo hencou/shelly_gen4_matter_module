@@ -224,6 +224,10 @@ it while the window is open closes it early.
 The physical shortcut does exactly the same: **press any button 6× rapidly**
 (within 2.5 seconds). Use that when the dashboard is unreachable over Thread.
 
+**Apply** on that tab only stores SSID, password, hostname and firmware URL — no
+reboot. The next window uses them, so a wrong SSID costs a toggle instead of a
+restart. **Restart** next to it reboots the device on request.
+
 Both work regardless of commissioning status. Without saved WiFi credentials —
 or when they do not connect within a minute — the window switches to an **open
 SoftAP** `shelly-cfg-XXXXXX` with the dashboard on `http://192.168.4.1/` for the
@@ -241,6 +245,7 @@ therefore:
 
 - starts WiFi as STA (SoftAP when there are no credentials, or when they fail);
 - keeps Thread up, but gives up the **router role** (`otThreadSetRouterEligible(false)`): no routing for other nodes, no children;
+- in the SoftAP fallback additionally makes Thread a **sleepy child** (`mRxOnWhenIdle=false`, 3 s parent poll). A station has an AP buffering frames for it while the radio serves 802.15.4, a SoftAP has nothing of the kind: with 802.15.4 receiving all the time, clients associate but never get a DHCP lease. Thread stays attached, but mesh traffic is as slow as the poll period until the window closes;
 - re-arms the coexistence arbiter (`esp_coex_wifi_i154_enable()`) before **every** `esp_wifi_start()`, because stopping WiFi hands the radio back to 802.15.4 — the SoftAP fallback would otherwise run without airtime;
 - stands down the **SRP fallback server**, which requires Router/Leader;
 - shares the radio, so expect more Thread packet loss while WiFi is busy.
@@ -466,10 +471,9 @@ The relay functions take an **optional 1-based channel** argument (`1` = relay 1
 
 | State | WiFi | Thread/BLE | How to reach |
 |---|---|---|---|
-| **Factory reset** (no scripts) | ON — STA + AP | OFF | After flash or factory reset |
-| **Configured** (scripts, no fabrics) | OFF | ON (BLE commissioning) | After configuring endpoints + reboot |
-| **Commissioned** (normal) | OFF | ON (Thread active) | After commissioning |
-| **Temporary WiFi** (management) | ON — STA only | Thread active as End Device (no router role, no SRP fallback) | "Enable WiFi 10 min" button or 6× press — no reboot, restores itself after 10 min |
+| **Not commissioned** | OFF | ON (BLE commissioning) | After flash or factory reset |
+| **Commissioned** (normal) | OFF | ON (Thread active) | Dashboard over Thread |
+| **Temporary WiFi** (management) | ON — STA, SoftAP when STA fails | Thread active as End Device (no router role, no SRP fallback; sleepy child during SoftAP) | "Enable WiFi 10 min" button or 6× press — no reboot, restores itself after 10 min |
 
 ## Status LED
 

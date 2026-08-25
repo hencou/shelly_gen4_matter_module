@@ -51,11 +51,10 @@ void bench_mode_init(void);
 #define LONG_PRESS_MS       CONFIG_LONG_PRESS_MS
 #define OCC_DEBOUNCE_MS     CONFIG_OCC_DEBOUNCE_MS
 #define TEMP_REPORT_INT_S   CONFIG_TEMP_REPORT_INTERVAL_S
-/* 6x click = temporary WiFi (universal on all 3 inputs):
- *   - Matter mode + 6x  -> WiFi station next to Thread for 10 minutes, no
- *                          reboot; same action as the button on the management
- *                          page (ota_wifi_coex_start)
- *   - OTA mode    + 6x  -> ignored */
+/* 6x click = temporary WiFi (universal on all 3 inputs): WiFi station next to
+ * Thread for 10 minutes, no reboot, falling back to a SoftAP when there is
+ * nothing to join; same action as the button on the management page
+ * (ota_wifi_coex_start). */
 #define MODE_TOGGLE_CLICKS      6
 #define MODE_TOGGLE_WINDOW_MS   2500
 /* Double-click detection: after a short press release, wait this long

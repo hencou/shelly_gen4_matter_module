@@ -11,32 +11,22 @@ extern "C" {
 /**
  * OTA / WiFi module for the Shelly 1 Gen4 custom firmware.
  *
- * Two WiFi paths:
+ * WiFi only ever runs next to Thread/Matter, in the temporary window from
+ * ota_wifi_coex_start() (6x clicks, or the button on the management page): no
+ * reboot, closes itself after 10 minutes. Firmware updates go over whichever
+ * interface is up — Matter OTA over Thread, an upload from the dashboard, or
+ * ota_update_from_url() — so there is no dedicated WiFi-only OTA mode that
+ * keeps the Matter stack down.
  *
- * A) Temporary WiFi next to Thread (6x clicks, or the button on the management
- *    page): no reboot, closes itself after 10 minutes. See
- *    ota_wifi_coex_start().
- *
- * B) Dedicated OTA mode (via ota_request_at_next_boot):
- *   1) NVS flag set + reboot.
- *   2) At boot: ota_handle_pending() inspects the flag.
- *      - If saved WiFi creds exist -> direct STA OTA.
- *      - Otherwise -> SoftAP "shelly-ota-XXXXXX" with HTTP form on
- *        http://192.168.4.1/ to enter SSID/pass/URL once.
- *   3) 10-minute timeout: if no upload occurs, reboot back to Matter.
- *   4) On success: esp_restart() -> new firmware boots, Thread resumes.
- *   5) On failure: ESP-IDF rollback does not mark new app as valid;
- *      after 3rd failed boot it reverts to the previous slot.
+ * On a failed update ESP-IDF rollback does not mark the new app as valid, and
+ * after the third failed boot the bootloader reverts to the previous slot.
  */
 
-/* Call early in app_main, before the Matter stack or large components. */
-void ota_handle_pending(void);
-
-/* Set OTA flag in NVS and reboot the device. */
-void ota_request_at_next_boot(void);
-
-/* Set OTA pending flag and reboot (used by web /ota POST handler). */
-void ota_request_ota_reboot(void);
+/* Fetch the saved firmware URL and reboot into it on success. Needs a working
+ * route to that URL, so open the temporary WiFi window first unless the server
+ * is reachable over Thread. Returns ESP_ERR_INVALID_STATE without a saved
+ * URL; the transfer itself runs in its own task. */
+esp_err_t ota_update_from_url(void);
 
 /* Temporary WiFi *alongside* Thread, without a reboot. Triggered from the
  * management page (which stays reachable over Thread the whole time) or by 6x

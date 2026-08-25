@@ -1,12 +1,10 @@
 /*
  * OTA + WiFi module for the Shelly 1 Gen4 custom Matter firmware.
  *
- * Two paths, both via WiFi:
- *   1) STA mode with saved creds            -> direct esp_https_ota fetch.
- *   2) SoftAP mode + HTTP upload form       -> user uploads .bin directly from browser.
- *
- * During OTA mode the Matter stack is NOT started. This avoids
- * coexistence overhead and keeps the firmware size during OTA minimal.
+ * WiFi always runs next to Thread/Matter, never instead of it: the temporary
+ * window from ota_wifi_coex_start() is the only path that touches the WiFi
+ * radio, and firmware can be updated over whichever interface is up (Matter
+ * OTA over Thread, an upload from the dashboard, or a URL fetch).
  *
  * HTTP handlers and the management dashboard live in web_api.c.
  */
@@ -52,7 +50,6 @@
 static const char *TAG = "ota";
 
 #define NVS_NS              "ota"
-#define NVS_KEY_PENDING     "pending"
 #define NVS_KEY_SSID        "ssid"
 #define NVS_KEY_PASS        "pass"
 #define NVS_KEY_URL         "url"
@@ -223,44 +220,6 @@ esp_err_t ota_bench_mode_save(int on)
     return err;
 }
 
-/* ---------- OTA pending flag ---------- */
-
-static bool ota_pending_read_and_clear(void)
-{
-    nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return false;
-    uint8_t v = 0;
-    nvs_get_u8(h, NVS_KEY_PENDING, &v);
-    nvs_set_u8(h, NVS_KEY_PENDING, 0);
-    nvs_commit(h);
-    nvs_close(h);
-    return v != 0;
-}
-
-void ota_request_at_next_boot(void)
-{
-    nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_u8(h, NVS_KEY_PENDING, 1);
-        nvs_commit(h);
-        nvs_close(h);
-    }
-    ESP_LOGW(TAG, "OTA requested -> rebooting");
-    vTaskDelay(pdMS_TO_TICKS(200));
-    esp_restart();
-}
-
-void ota_request_ota_reboot(void)
-{
-    nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_u8(h, NVS_KEY_PENDING, 1);
-        nvs_commit(h);
-        nvs_close(h);
-    }
-    esp_restart();
-}
-
 /* ---------- WiFi STA ---------- */
 
 static void wifi_reconnect_cb(TimerHandle_t timer)
@@ -296,41 +255,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
     }
 }
 
-static esp_err_t wifi_init_sta(const char *ssid, const char *pass)
-{
-    s_wifi_evt = xEventGroupCreate();
-
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_t *sta_nif = esp_netif_create_default_wifi_sta();
-    if (sta_nif) {
-        esp_netif_set_hostname(sta_nif, ota_hostname_get());
-    }
-
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-
-    esp_event_handler_instance_t any_id, got_ip;
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(
-        WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, &any_id));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(
-        IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, &got_ip));
-
-    wifi_config_t wcfg = { 0 };
-    strncpy((char*)wcfg.sta.ssid,     ssid, sizeof(wcfg.sta.ssid));
-    strncpy((char*)wcfg.sta.password, pass, sizeof(wcfg.sta.password));
-    wcfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wcfg));
-    ESP_ERROR_CHECK(esp_wifi_start());
-
-    EventBits_t bits = xEventGroupWaitBits(
-        s_wifi_evt, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-        pdFALSE, pdFALSE, pdMS_TO_TICKS(30000));
-    return (bits & WIFI_CONNECTED_BIT) ? ESP_OK : ESP_FAIL;
-}
-
-/* ---------- HTTPS OTA fetch (STA path: fetch URL) ---------- */
+/* ---------- HTTPS OTA fetch from a URL ---------- */
 
 static esp_err_t do_ota_from_url(const char *url)
 {
@@ -364,77 +289,6 @@ static esp_err_t do_ota_from_url(const char *url)
     }
     ESP_LOGE(TAG, "OTA failed: %s", esp_err_to_name(err));
     return err;
-}
-
-/* ---------- OTA timeout ---------- */
-
-#define OTA_TIMEOUT_MS   (10 * 60 * 1000)
-#define OTA_TICK_MS      5000
-
-static void wait_for_upload_or_timeout(void)
-{
-    int32_t remaining_ms = OTA_TIMEOUT_MS;
-    while (remaining_ms > 0) {
-        int32_t sleep = (remaining_ms < OTA_TICK_MS)
-                        ? remaining_ms : OTA_TICK_MS;
-        vTaskDelay(pdMS_TO_TICKS(sleep));
-        remaining_ms -= sleep;
-        if (remaining_ms > 0) {
-            ESP_LOGW(TAG, "OTA: %"PRId32" seconds remaining, waiting for upload...",
-                     remaining_ms / 1000);
-        }
-    }
-
-    ESP_LOGW(TAG, "OTA timeout expired — rebooting to Matter mode");
-    vTaskDelay(pdMS_TO_TICKS(200));
-    esp_restart();
-}
-
-/* ---------- Start SoftAP ---------- */
-
-static void run_softap(void)
-{
-    uint8_t mac[6];
-    esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
-    char ssid[32];
-    snprintf(ssid, sizeof(ssid), "shelly-ota-%02X%02X%02X",
-             mac[3], mac[4], mac[5]);
-
-    ESP_LOGW(TAG, "SoftAP opening: '%s' (open network)", ssid);
-
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_ap();
-
-    wifi_init_config_t wic = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&wic));
-
-    wifi_config_t apc = {
-        .ap = {
-            .max_connection = 3,
-            .authmode = WIFI_AUTH_OPEN,
-            .channel = 6,
-        },
-    };
-    strncpy((char*)apc.ap.ssid, ssid, sizeof(apc.ap.ssid));
-    apc.ap.ssid_len = strlen(ssid);
-
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &apc));
-    ESP_ERROR_CHECK(esp_wifi_start());
-
-    web_api_start_httpd();
-
-    ESP_LOGW(TAG, "SoftAP ready. Connect to '%s', open http://192.168.4.1/", ssid);
-
-    wait_for_upload_or_timeout();  /* never returns (reboots) */
-}
-
-/* ---------- Button callback during OTA mode ---------- */
-
-static void ota_mode_button_cb(input_id_t id, button_event_t evt)
-{
-    ESP_LOGI(TAG, "OTA mode: input=%d evt=%d ignored", id, evt);
 }
 
 /* ---------- Temporary WiFi alongside Thread/Matter ---------- */
@@ -501,6 +355,7 @@ static bool load_sta_credentials(char *ssid, size_t ssidlen,
 #define WIFI_COEX_WINDOW_US    (10ULL * 60 * 1000 * 1000)   /* 10 minutes */
 #define WIFI_COEX_CONNECT_MS   60000                        /* give up if never up */
 #define WIFI_COEX_TICK_MS      1000
+#define WIFI_COEX_AP_POLL_MS   3000    /* parent poll while the SoftAP has the radio */
 
 static volatile bool    s_coex_active      = false;
 static volatile int64_t s_coex_deadline_us = 0;
@@ -536,6 +391,7 @@ static void wifi_coex_teardown(void)
 #endif
     }
 
+    matter_thread_sleepy_set(false, 0);
     matter_thread_router_eligible_set(true);
     matter_srp_fallback_pause(false);
     ESP_LOGW(TAG, "wifi_coex: WiFi off, Thread router role and SRP fallback restored");
@@ -597,6 +453,12 @@ static esp_err_t wifi_coex_start_ap(void)
     strncpy((char*)apc.ap.ssid, ap_ssid, sizeof(apc.ap.ssid));
     apc.ap.ssid_len = strlen(ap_ssid);
 
+    /* Unlike a station, a SoftAP has no parent buffering frames for it while
+     * the shared radio serves 802.15.4, so an always-receiving Thread child
+     * starves it: clients associate but never get a DHCP lease. Poll-driven
+     * sleepy mode hands that airtime to the AP and keeps Thread attached. */
+    matter_thread_sleepy_set(true, WIFI_COEX_AP_POLL_MS);
+
     esp_err_t err = esp_wifi_set_mode(WIFI_MODE_AP);
     if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_AP, &apc);
     /* Claim the radio again: a preceding station attempt released it on stop. */
@@ -604,15 +466,19 @@ static esp_err_t wifi_coex_start_ap(void)
     if (err == ESP_OK) err = esp_wifi_start();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "wifi_coex: SoftAP start failed (%s)", esp_err_to_name(err));
+        matter_thread_sleepy_set(false, 0);
         return err;
     }
+    /* A station attempt left modem sleep on; an AP must stay awake for its
+     * clients. */
+    esp_wifi_set_ps(WIFI_PS_NONE);
 
     web_api_start_httpd();
     /* Espressif documents SoftAP next to 802.15.4 as limited even for an end
-     * device (a connected client is their "C1" cell), so Thread may drop
-     * packets while a browser is talking to the AP. */
+     * device (a connected client is their "C1" cell), so Thread traffic gets
+     * slower while a browser is talking to the AP. */
     ESP_LOGW(TAG, "wifi_coex: SoftAP '%s' open, dashboard on http://192.168.4.1/ "
-                  "(Thread shares the radio and may lose packets meanwhile)",
+                  "(Thread polls its parent meanwhile, so mesh traffic is slower)",
              ap_ssid);
     return ESP_OK;
 }
@@ -777,58 +643,39 @@ int ota_wifi_coex_seconds_left(void)
 
 /* ---------- Public entrypoints ---------- */
 
-void ota_handle_pending(void)
+/* Fetch the saved firmware URL over whichever interface is up. Runs in its own
+ * task: esp_https_ota() blocks for the whole transfer, and it reboots on
+ * success, so it must not sit on the HTTP server task that answered the
+ * request. */
+static void ota_url_task(void *arg)
 {
-    if (!ota_pending_read_and_clear()) {
+    (void)arg;
+    char ssid[33] = {0}, pass[65] = {0}, url[256] = {0};
+    ota_load_credentials(ssid, sizeof(ssid), pass, sizeof(pass), url, sizeof(url));
+    if (!url[0]) {
+        ESP_LOGE(TAG, "update from URL: no firmware URL saved");
+        vTaskDelete(NULL);
         return;
     }
-    ESP_LOGW(TAG, "OTA pending — entering DEDICATED OTA-mode (Matter NOT started)");
-    ESP_LOGW(TAG, "OTA mode: sensor tasks not started, Hardware tab shows no Add-on readings");
+    if (do_ota_from_url(url) == ESP_OK) {
+        vTaskDelay(pdMS_TO_TICKS(500));
+        esp_restart();
+    }
+    vTaskDelete(NULL);
+}
 
-    button_driver_init(ota_mode_button_cb);
-    status_led_set(STATUS_LED_FAST_BLINK);
-
+esp_err_t ota_update_from_url(void)
+{
     char ssid[33] = {0}, pass[65] = {0}, url[256] = {0};
-    bool have_creds = ota_load_credentials(ssid, sizeof(ssid),
-                                           pass, sizeof(pass),
-                                           url,  sizeof(url));
+    ota_load_credentials(ssid, sizeof(ssid), pass, sizeof(pass), url, sizeof(url));
+    if (!url[0]) return ESP_ERR_INVALID_STATE;
 
-#ifdef DEFAULT_WIFI_SSID
-    if (!have_creds) {
-        ESP_LOGI(TAG, "No saved WiFi creds — using compile-time defaults");
-#ifndef DEFAULT_WIFI_PASS
-#define DEFAULT_WIFI_PASS ""
-#endif
-#ifndef DEFAULT_OTA_URL
-#define DEFAULT_OTA_URL   ""
-#endif
-        ota_save_credentials(DEFAULT_WIFI_SSID,
-                             DEFAULT_WIFI_PASS,
-                             DEFAULT_OTA_URL);
-        strncpy(ssid, DEFAULT_WIFI_SSID, sizeof(ssid) - 1);
-        strncpy(pass, DEFAULT_WIFI_PASS, sizeof(pass) - 1);
-        strncpy(url,  DEFAULT_OTA_URL,   sizeof(url) - 1);
-        have_creds = strlen(ssid) > 0;
+    status_led_set(STATUS_LED_FAST_BLINK);
+    if (xTaskCreate(ota_url_task, "ota_url", 8192, NULL, 5, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "update from URL: task create failed");
+        return ESP_ERR_NO_MEM;
     }
-#endif
-    if (have_creds) {
-        ESP_LOGI(TAG, "trying STA OTA -> ssid=%s url=%s", ssid, url);
-        if (wifi_init_sta(ssid, pass) == ESP_OK) {
-            web_api_start_httpd();
-            ESP_LOGW(TAG, "STA connected. OTA web interface available on local IP");
-
-            if (url[0] && do_ota_from_url(url) == ESP_OK) {
-                vTaskDelay(pdMS_TO_TICKS(500));
-                esp_restart();
-            }
-            ESP_LOGW(TAG, "URL fetch skipped/failed, waiting for manual upload...");
-            wait_for_upload_or_timeout();
-        }
-        ESP_LOGW(TAG, "STA connection failed, falling back to SoftAP");
-        esp_wifi_stop();
-        esp_wifi_deinit();
-    }
-    run_softap();
+    return ESP_OK;
 }
 
 void ota_mark_app_valid(void)
