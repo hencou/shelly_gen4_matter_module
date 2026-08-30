@@ -1464,9 +1464,11 @@ extern "C" esp_err_t matter_thread_sleepy_set(bool sleepy, uint32_t poll_period_
         mode.mRxOnWhenIdle = !sleepy;
         /* OpenThread rejects rx-off-when-idle on a full Thread device with
          * OT_ERROR_INVALID_ARGS, so a sleepy node must give up the FTD role in
-         * the same link mode and stop asking for full network data. */
+         * the same link mode. Full network data stays requested: without it the
+         * node loses the on-mesh prefix routes and off-mesh sends fail with
+         * lwIP ERR_RTE, which cuts Matter off from the controller. */
         mode.mDeviceType   = !sleepy;
-        mode.mNetworkData  = !sleepy;
+        mode.mNetworkData  = true;
         otError err = otThreadSetLinkMode(instance, mode);
         if (err == OT_ERROR_NONE && sleepy)
             err = otLinkSetPollPeriod(instance, poll_period_ms);
