@@ -98,7 +98,8 @@ esp_err_t matter_thread_router_eligible_set(bool eligible);
  * wakes to poll its parent, which frees the radio for the SoftAP while Thread
  * stays attached (at the cost of poll-period latency). Requires the router role
  * to be given up first, and gives up the FTD role for the duration: OpenThread
- * refuses rx-off-when-idle on a full Thread device. */
+ * refuses rx-off-when-idle on a full Thread device. Full network data is kept
+ * in either mode, so on-mesh routes stay usable. */
 esp_err_t matter_thread_sleepy_set(bool sleepy, uint32_t poll_period_ms);
 
 /* Bring the Thread interface up or down at runtime. Last resort for the SoftAP
