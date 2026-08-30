@@ -35,6 +35,7 @@
 #include "esp_app_format.h"
 #include "esp_mac.h"
 #include "esp_chip_info.h"
+#include "esp_heap_caps.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "driver/gpio.h"
@@ -157,7 +158,12 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
     int up_m  = (up_s % 3600) / 60;
     int up_ss = up_s % 60;
 
-    uint32_t heap = esp_get_free_heap_size();
+    /* The largest free block and the low-water mark say more than the total:
+     * WiFi and TLS need contiguous blocks, so a fragmented heap fails while the
+     * total still looks healthy. */
+    uint32_t heap      = esp_get_free_heap_size();
+    uint32_t heap_min  = esp_get_minimum_free_heap_size();
+    size_t   heap_max  = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
 
     char ctemp_str[32] = "N/A";
     {
@@ -279,7 +285,7 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
         "\"wifi_mode\":\"%s\","
         "\"wifi_rssi\":\"%s\","
         "\"uptime\":\"%dh %02dm %02ds\","
-        "\"free_heap\":\"%lu bytes\","
+        "\"free_heap\":\"%lu bytes (largest block %lu, min ever %lu)\","
         "\"chip_temp\":\"%s\","
         "\"reset_reason\":\"%s\","
         "\"bench_mode\":\"%s\","
@@ -301,7 +307,7 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
         wmode_str,
         rssi_str,
         up_h, up_m, up_ss,
-        (unsigned long)heap,
+        (unsigned long)heap, (unsigned long)heap_max, (unsigned long)heap_min,
         ctemp_str,
         rst,
         g_bench_mode ? "ON" : "OFF",
@@ -1216,7 +1222,15 @@ void web_api_start_httpd(void)
     hc.stack_size         = 8192;
     hc.recv_wait_timeout  = 30;
     hc.send_wait_timeout  = 10;
-    hc.max_open_sockets   = 3;
+    /* A browser holds several keep-alive sockets open per tab and the Log and
+     * Hardware tabs poll on top of that, so the listener runs out of slots.
+     * Without lru_purge_enable the next request is not served until an idle
+     * socket hits recv_wait_timeout, which looks like a frozen page; purging
+     * the least recently used socket keeps the newest request first in line.
+     * lwIP has CONFIG_LWIP_MAX_SOCKETS (10) in total and Matter/Thread need
+     * several UDP sockets of that, so the listener stays modest. */
+    hc.lru_purge_enable   = true;
+    hc.max_open_sockets   = 4;
     hc.max_uri_handlers   = 27;
     ESP_ERROR_CHECK(httpd_start(&srv, &hc));
 
