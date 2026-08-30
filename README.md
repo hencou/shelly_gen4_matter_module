@@ -430,7 +430,7 @@ The relay functions take an **optional 1-based channel** argument (`1` = relay 1
 | `endpoint.command("toggle")` | Send OnOff Toggle to bound devices |
 | `endpoint.command("on")` | Send OnOff On |
 | `endpoint.command("off")` | Send OnOff Off |
-| `endpoint.command("move_with_onoff", {up=bool, rate=N})` | Start dimming |
+| `endpoint.command("move_with_onoff", {up=bool, rate=N})` | Start dimming (`up=true` sends On first; `up=false` on an off lamp does nothing) |
 | `endpoint.command("stop")` | Stop dimming |
 | `endpoint.command("color_temp_set", {mireds=N})` | Set color temperature |
 | `endpoint.command("color_temp_move", {warmer=bool, rate=N})` | Start color temp change |

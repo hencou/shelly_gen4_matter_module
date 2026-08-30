@@ -142,21 +142,32 @@ Same as above, but dim direction and color direction alternate each time.
 | Endpoint Type | OnOff Toggle + Dim + Color (client) |
 | Trigger | On button event |
 
+The direction only alternates within one dimming session. After 10 seconds of
+inactivity — or after a short press — it starts at "up" again. Without that
+reset a first long press can arrive as "down" on a lamp that is already off,
+which is a valid command that does nothing visible.
+
 ```lua
+local IDLE_RESET_MS = 10000
+
 local dim_up = true
 local color_warmer = true
+local last_dim_ms = 0
 
 function run()
   local evt = input.button_event()
   if evt == "short_press" then
     endpoint.command("toggle")
+    dim_up = true
     log("toggle")
   elseif evt == "long_press_start" then
+    if timer.millis() - last_dim_ms > IDLE_RESET_MS then dim_up = true end
     endpoint.command("move_with_onoff", {up=dim_up, rate=50})
     log("dim " .. (dim_up and "up" or "down"))
   elseif evt == "long_press_stop" then
     endpoint.command("stop")
     dim_up = not dim_up
+    last_dim_ms = timer.millis()
     log("dim stop, next: " .. (dim_up and "up" or "down"))
   elseif evt == "double_press" then
     endpoint.command("color_temp_set", {mireds=370})
@@ -513,7 +524,9 @@ Relay functions take an optional 1-based channel (`1`=relay 1, `2`=relay 2 on th
 ### Endpoint (client commands)
 - `endpoint.command("toggle")`
 - `endpoint.command("on")` / `endpoint.command("off")`
-- `endpoint.command("move_with_onoff", {up=bool, rate=N})`
+- `endpoint.command("move_with_onoff", {up=bool, rate=N})` — `up=true` sends an
+  explicit On first, so it works on a lamp that is off; `up=false` on a lamp that
+  is already off is accepted by the lamp but changes nothing
 - `endpoint.command("move_to_level", {level=N, transition=T})` — N: 1–254, T: 1/10th seconds
 - `endpoint.command("stop")`
 - `endpoint.command("color_temp_set", {mireds=N})`
