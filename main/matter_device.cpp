@@ -1171,17 +1171,21 @@ static void thread_watchdog_cb(void *)
         return;
     }
 
-    s_twdg_detached_ticks++;
-    ESP_LOGW(TAG, "Thread detached — watchdog tick %d", s_twdg_detached_ticks);
-
-    /* Temporary WiFi shares the one radio, so Thread wins the moment it
-     * suffers: closing the window gives back the router role and lets the
-     * re-attach happen on a Thread-only radio. */
+    /* A detached node during the WiFi window is expected, not a fault: giving up
+     * the router role and rx-on-when-idle makes the node re-attach as a sleepy
+     * child, and on a shared radio that takes longer than one tick. Recovering
+     * here would kill the very window the user just asked for, so the watchdog
+     * holds off — the window closes itself and restores a full Thread radio,
+     * after which counting starts from zero. */
     if (ota_wifi_coex_seconds_left() > 0) {
-        ESP_LOGW(TAG, "Thread detached while temporary WiFi is on — closing the WiFi window");
-        ota_wifi_coex_stop();
+        s_twdg_detached_ticks = 0;
+        ESP_LOGI(TAG, "Thread detached while temporary WiFi is on — watchdog waits "
+                      "for the window to close");
         return;
     }
+
+    s_twdg_detached_ticks++;
+    ESP_LOGW(TAG, "Thread detached — watchdog tick %d", s_twdg_detached_ticks);
 
     if (s_twdg_detached_ticks == TWDG_SOFT_TICKS) {
         ESP_LOGW(TAG, "Thread detached ~%d s — toggling interface to force re-attach",
