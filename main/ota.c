@@ -355,14 +355,14 @@ static bool load_sta_credentials(char *ssid, size_t ssidlen,
 #define WIFI_COEX_WINDOW_US    (10ULL * 60 * 1000 * 1000)   /* 10 minutes */
 #define WIFI_COEX_CONNECT_MS   60000                        /* give up if never up */
 #define WIFI_COEX_TICK_MS      1000
-#define WIFI_COEX_AP_POLL_MS   3000    /* parent poll while the SoftAP has the radio */
+#define WIFI_COEX_POLL_MS      3000    /* parent poll while WiFi has the radio */
 
 static volatile bool    s_coex_active      = false;
 static volatile int64_t s_coex_deadline_us = 0;
 static bool s_coex_wifi_inited = false;
 static esp_event_handler_instance_t s_coex_evt_any = NULL;
 static esp_event_handler_instance_t s_coex_evt_ip  = NULL;
-/* Set when the SoftAP could only be served by taking Thread down entirely. */
+/* Set when WiFi could only be served by taking Thread down entirely. */
 static bool s_coex_thread_down = false;
 
 /* Give the radio and the Thread role back. Safe to call after a partial start. */
@@ -401,6 +401,23 @@ static void wifi_coex_teardown(void)
     matter_thread_router_eligible_set(true);
     matter_srp_fallback_pause(false);
     ESP_LOGW(TAG, "wifi_coex: WiFi off, Thread router role and SRP fallback restored");
+}
+
+/* Hand the shared radio to WiFi for the length of the window. An rx-on-when-idle
+ * Thread node keeps the 802.15.4 receiver on permanently, so the arbiter leaves
+ * WiFi only the slivers between Thread activity: a station then misses beacons
+ * and its TCP sends stall until httpd's send timeout fires, and a SoftAP client
+ * never even gets a DHCP lease. As a sleepy child the node polls its parent
+ * instead, which frees that airtime while Matter stays reachable (slower). If
+ * the stack refuses sleepy mode, an unreachable module is worse than a Thread
+ * outage that ends with the window, so 802.15.4 goes down instead. */
+static void wifi_coex_yield_radio(void)
+{
+    if (matter_thread_sleepy_set(true, WIFI_COEX_POLL_MS) != ESP_OK) {
+        ESP_LOGW(TAG, "wifi_coex: Thread refused sleepy mode — taking Thread down "
+                      "for the WiFi window");
+        s_coex_thread_down = (matter_thread_enabled_set(false) == ESP_OK);
+    }
 }
 
 /* Register WiFi as a radio client next to 802.15.4. ESP-IDF does not do this on
@@ -459,18 +476,6 @@ static esp_err_t wifi_coex_start_ap(void)
     strncpy((char*)apc.ap.ssid, ap_ssid, sizeof(apc.ap.ssid));
     apc.ap.ssid_len = strlen(ap_ssid);
 
-    /* Unlike a station, a SoftAP has no parent buffering frames for it while
-     * the shared radio serves 802.15.4, so an always-receiving Thread child
-     * starves it: clients associate but never get a DHCP lease. Poll-driven
-     * sleepy mode hands that airtime to the AP and keeps Thread attached; if the
-     * stack will not go sleepy, an unreachable module is worse than a Thread
-     * outage that ends with the window, so 802.15.4 goes down instead. */
-    if (matter_thread_sleepy_set(true, WIFI_COEX_AP_POLL_MS) != ESP_OK) {
-        ESP_LOGW(TAG, "wifi_coex: Thread refused sleepy mode — taking Thread down "
-                      "for the SoftAP window");
-        s_coex_thread_down = (matter_thread_enabled_set(false) == ESP_OK);
-    }
-
     esp_err_t err = esp_wifi_set_mode(WIFI_MODE_AP);
     if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_AP, &apc);
     /* Claim the radio again: a preceding station attempt released it on stop. */
@@ -519,6 +524,7 @@ static void wifi_coex_task(void *arg)
      * sees an orderly downgrade instead of a router that stops responding. */
     matter_srp_fallback_pause(true);
     matter_thread_router_eligible_set(false);
+    wifi_coex_yield_radio();
 
     if (!s_coex_wifi_inited) {
         wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -571,8 +577,11 @@ static void wifi_coex_task(void *arg)
         } else {
             /* Modem sleep leaves the radio to Thread between WiFi beacons. */
             esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
-            ESP_LOGW(TAG, "wifi_coex: STA-only connecting to '%s' (source: %s), Thread stays up",
-                     ssid, from_compile_time ? "compile-time" : "NVS");
+            ESP_LOGW(TAG, "wifi_coex: STA-only connecting to '%s' (source: %s), %s",
+                     ssid, from_compile_time ? "compile-time" : "NVS",
+                     s_coex_thread_down ? "Thread is down until the window closes"
+                                        : "Thread polls its parent meanwhile, so "
+                                          "mesh traffic is slower");
 
             EventBits_t bits = xEventGroupWaitBits(s_wifi_evt,
                                                    WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
