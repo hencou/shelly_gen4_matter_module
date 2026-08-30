@@ -56,6 +56,26 @@
 
 static const char *TAG = "web_api";
 
+/* Read the whole request body; httpd_req_recv() returns one socket read, which
+ * for bodies larger than a TCP segment is only the first fragment.
+ * Returns the length, 0 on empty body, -1 on error, -2 if it does not fit. */
+static int recv_body(httpd_req_t *req, char *buf, size_t size)
+{
+    size_t total = req->content_len;
+    if (total == 0) return 0;
+    if (total >= size) return -2;
+
+    size_t got = 0;
+    while (got < total) {
+        int r = httpd_req_recv(req, buf + got, total - got);
+        if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (r <= 0) return -1;
+        got += (size_t)r;
+    }
+    buf[got] = '\0';
+    return (int)got;
+}
+
 /* ---------- HTTP handlers ---------- */
 
 static esp_err_t form_get(httpd_req_t *req)
@@ -315,12 +335,15 @@ static esp_err_t api_bench_mode_post(httpd_req_t *req)
 static esp_err_t api_keepalive_post(httpd_req_t *req)
 {
     char body[64] = { 0 };
-    int len = httpd_req_recv(req, body, sizeof(body) - 1);
+    int len = recv_body(req, body, sizeof(body));
+    if (len == -2) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "body too large");
+        return ESP_FAIL;
+    }
     if (len <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body");
         return ESP_FAIL;
     }
-    body[len] = '\0';
 
     cJSON *root = cJSON_Parse(body);
     if (!root) {
@@ -384,12 +407,15 @@ static esp_err_t api_hw_config_get(httpd_req_t *req)
 static esp_err_t api_hw_config_post(httpd_req_t *req)
 {
     char body[128] = { 0 };
-    int len = httpd_req_recv(req, body, sizeof(body) - 1);
+    int len = recv_body(req, body, sizeof(body));
+    if (len == -2) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "body too large");
+        return ESP_FAIL;
+    }
     if (len <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body");
         return ESP_FAIL;
     }
-    body[len] = '\0';
 
     cJSON *root = cJSON_Parse(body);
     if (!root) {
@@ -889,7 +915,11 @@ static bool form_field(const char *body, const char *key, char *out, size_t outl
 static esp_err_t ota_post(httpd_req_t *req)
 {
     char body[512] = { 0 };
-    int len = httpd_req_recv(req, body, sizeof(body) - 1);
+    int len = recv_body(req, body, sizeof(body));
+    if (len == -2) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "body too large");
+        return ESP_FAIL;
+    }
     if (len <= 0) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no body");
         return ESP_FAIL;
@@ -946,7 +976,8 @@ static esp_err_t api_script_get(httpd_req_t *req)
     script_slot_config_t cfg;
     script_slot_get((uint8_t)slot, &cfg);
 
-    static char json[3072];
+    /* Worst case every script byte escapes to two, plus the fixed fields. */
+    static char json[2 * SCRIPT_MAX_SIZE + 512];
     int pos = 0;
     pos += snprintf(json + pos, sizeof(json) - pos,
         "{\"slot\":%d,\"type\":%d,\"trigger\":%d,\"period_ms\":%u,\"name\":\"",
@@ -974,13 +1005,17 @@ static esp_err_t api_script_get(httpd_req_t *req)
 /* POST /api/script — save slot config from JSON body (with cJSON + Lua syntax check) */
 static esp_err_t api_script_post(httpd_req_t *req)
 {
-    static char body[3072];
-    int len = httpd_req_recv(req, body, sizeof(body) - 1);
+    static char body[2 * SCRIPT_MAX_SIZE + 512];
+    int len = recv_body(req, body, sizeof(body));
+    if (len == -2) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "script too large (max 2048 bytes)");
+        return ESP_FAIL;
+    }
     if (len <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body");
         return ESP_FAIL;
     }
-    body[len] = '\0';
 
     cJSON *root = cJSON_Parse(body);
     if (!root) {
@@ -1016,8 +1051,15 @@ static esp_err_t api_script_post(httpd_req_t *req)
         strncpy(cfg.name, j_name->valuestring, SCRIPT_NAME_LEN - 1);
 
     cJSON *j_script = cJSON_GetObjectItem(root, "script");
-    if (j_script && cJSON_IsString(j_script))
+    if (j_script && cJSON_IsString(j_script)) {
+        if (strlen(j_script->valuestring) >= SCRIPT_MAX_SIZE) {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                                "script too large (max 2047 bytes)");
+            return ESP_FAIL;
+        }
         strncpy(cfg.script, j_script->valuestring, SCRIPT_MAX_SIZE - 1);
+    }
 
     cJSON_Delete(root);
 
