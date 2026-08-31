@@ -1987,6 +1987,54 @@ static const char *slot_type_name(script_slot_type_t type)
     }
 }
 
+#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
+/* OpenThread stores the MLE device mode in its network info, so the sleepy MTD
+ * mode of a temporary WiFi window survives a reboot taken before the window
+ * restored it. esp-matter then asks for the router role on a node that reports
+ * itself as an MTD, otThreadSetRouterEligible() answers NotCapable, and
+ * esp-matter returns early — skipping StartThreadTask(). The result is a netif
+ * that is up while no task ever drives MLE: the node stays detached forever and
+ * only a factory reset gets it back. Put the FTD mode back and launch the task
+ * esp-matter did not. */
+static void thread_recover_full_device_mode(void)
+{
+    bool recovered = false;
+
+    chip::DeviceLayer::ThreadStackMgr().LockThreadStack();
+    otInstance *instance = esp_openthread_get_instance();
+    if (instance != nullptr) {
+        otLinkModeConfig mode = otThreadGetLinkMode(instance);
+        if (!mode.mDeviceType) {
+            mode.mDeviceType   = true;
+            mode.mRxOnWhenIdle = true;
+            mode.mNetworkData  = true;
+            otError err = otThreadSetLinkMode(instance, mode);
+            if (err == OT_ERROR_NONE) {
+                err = otThreadSetRouterEligible(instance, true);
+            }
+            if (err != OT_ERROR_NONE) {
+                ESP_LOGE(TAG, "Thread stayed an MTD after boot and could not be "
+                              "restored to a full Thread device: %d", err);
+            } else {
+                recovered = true;
+            }
+        }
+    }
+    chip::DeviceLayer::ThreadStackMgr().UnlockThreadStack();
+
+    if (!recovered) {
+        return;
+    }
+
+    ESP_LOGW(TAG, "Thread booted as an MTD (leftover sleepy mode) — full Thread "
+                  "device restored, starting the Thread task esp-matter skipped");
+    CHIP_ERROR cerr = chip::DeviceLayer::ThreadStackMgr().StartThreadTask();
+    if (cerr != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Thread task start failed: %" CHIP_ERROR_FORMAT, cerr.Format());
+    }
+}
+#endif
+
 extern "C" esp_err_t matter_start(const script_slot_type_t *slot_types, uint8_t num_slots)
 {
     /* Store slot types for later use by update functions */
@@ -2077,6 +2125,10 @@ extern "C" esp_err_t matter_start(const script_slot_type_t *slot_types, uint8_t 
     /* Start the stack */
     esp_err_t err = esp_matter::start(NULL);
     if (err != ESP_OK) { ESP_LOGE(TAG, "esp_matter::start: %d", err); return err; }
+
+#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
+    thread_recover_full_device_mode();
+#endif
 
     /* Force-init BindingManager so binding table loads from NVS immediately,
      * regardless of DNS-SD / network state.  Must run on CHIP thread. */
