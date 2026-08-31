@@ -357,7 +357,11 @@ static bool load_sta_credentials(char *ssid, size_t ssidlen,
 #define WIFI_COEX_WINDOW_US    (10ULL * 60 * 1000 * 1000)   /* 10 minutes */
 #define WIFI_COEX_CONNECT_MS   60000                        /* give up if never up */
 #define WIFI_COEX_TICK_MS      1000
-#define WIFI_COEX_POLL_MS      3000    /* parent poll while WiFi has the radio */
+/* Parent poll period while WiFi shares the radio. Everything addressed to the
+ * node waits at its parent until the next poll, so this is the latency Matter
+ * and the dashboard over Thread see during the window; 1 s keeps them usable
+ * without polling so often that the station misses its beacons. */
+#define WIFI_COEX_POLL_MS      1000
 
 static volatile bool    s_coex_active      = false;
 static volatile int64_t s_coex_deadline_us = 0;
@@ -607,6 +611,10 @@ static void wifi_coex_task(void *arg)
          * pick the strongest AP instead of the first hit. */
         wcfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
         wcfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+        /* Announce the shortest possible listen interval in the association
+         * request: the driver otherwise asks for 3-4 beacons (~0.4 s), and the
+         * AP is then free to buffer every downstream frame that long. */
+        wcfg.sta.listen_interval = 1;
 
         esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
         if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_STA, &wcfg);
@@ -620,16 +628,16 @@ static void wifi_coex_task(void *arg)
             wifi_coex_sta_stop();
             need_ap = true;
         } else {
-            /* No modem sleep: Thread already gave up the radio (sleepy link
-             * mode, it only wakes to poll its parent), so the gaps between
-             * beacons buy nothing, while the AP holds every downstream frame
-             * until the next listen interval — with DTIM 2 and a negotiated
-             * interval of 4 beacons that is ~0.4 s per round trip. The 30 kB
-             * dashboard and the 8 kB log poll then outlast the 10 s httpd send
-             * timeout and the request dies with "httpd_sock_err: error in send:
-             * 11" (EAGAIN). The window exists to manage the device, so give it
-             * the radio for those ten minutes. */
-            esp_wifi_set_ps(WIFI_PS_NONE);
+            /* Modem sleep, so both stacks get airtime. WIFI_PS_NONE keeps the
+             * station awake permanently ("Coexist!!! Wi-Fi station would only
+             * keep waked when available"), and on a single shared antenna the
+             * sleepy Thread child then never gets to poll its parent: Matter and
+             * the dashboard over Thread are gone for the whole window. Sleeping
+             * between beacons hands those gaps back to 802.15.4. The earlier
+             * stalled HTTP sends came from the AP buffering frames for a
+             * negotiated interval of 4 beacons (~0.4 s) against a 10 s send
+             * timeout; that is now listen_interval 1 with a 30 s timeout. */
+            esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
             ESP_LOGW(TAG, "wifi_coex: STA-only connecting to '%s' (source: %s), %s",
                      ssid, from_compile_time ? "compile-time" : "NVS",
                      s_coex_thread_down ? "Thread is down until the window closes"
