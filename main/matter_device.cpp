@@ -2126,8 +2126,6 @@ extern "C" esp_err_t matter_start(const script_slot_type_t *slot_types, uint8_t 
     }
 #endif
 
-    keepalive_init();
-
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     esp_openthread_platform_config_t ot_cfg = {
         .radio_config = ESP_OPENTHREAD_DEFAULT_RADIO_CONFIG(),
@@ -2144,6 +2142,10 @@ extern "C" esp_err_t matter_start(const script_slot_type_t *slot_types, uint8_t 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     thread_recover_full_device_mode();
 #endif
+
+    /* After esp_matter::start(): the first timer is armed with ScheduleWork(),
+     * which needs a running CHIP event loop. */
+    keepalive_init();
 
     /* Force-init BindingManager so binding table loads from NVS immediately,
      * regardless of DNS-SD / network state.  Must run on CHIP thread. */
