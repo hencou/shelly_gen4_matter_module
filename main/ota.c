@@ -40,6 +40,7 @@
 #include "esp_mac.h"
 #include "esp_http_client.h"
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
@@ -501,6 +502,26 @@ static esp_err_t wifi_coex_start_ap(void)
     return ESP_OK;
 }
 
+/* The default buffer counts come from sdkconfig and assume WiFi owns the
+ * device. Here it is a ten-minute management window on a node that is already
+ * running Matter, Thread and the Lua endpoints, so the driver has to fit in what
+ * is left: with 4 endpoints configured the free heap drops to ~15 kB, and the 10
+ * static RX buffers of 1700 bytes alone need ~17 kB. The driver then logs
+ * "malloc buffer fail" / "Expected to init 10 rx buffer, actual is 6" and
+ * esp_wifi_init() returns ESP_ERR_NO_MEM, so the window never opens. These
+ * counts cost throughput, not reachability, which is the right trade for a
+ * dashboard. rx_ba_win stays within the driver's limits (<= static_rx_buf_num *
+ * 2 and <= dynamic_rx_buf_num / 2). */
+static void wifi_coex_shrink_buffers(wifi_init_config_t *cfg)
+{
+    cfg->static_rx_buf_num  = 4;
+    cfg->dynamic_rx_buf_num = 16;
+    cfg->dynamic_tx_buf_num = 16;
+    cfg->rx_mgmt_buf_num    = 5;
+    cfg->mgmt_sbuf_num      = 8;
+    cfg->rx_ba_win          = 4;
+}
+
 static void wifi_coex_task(void *arg)
 {
     (void)arg;
@@ -528,9 +549,13 @@ static void wifi_coex_task(void *arg)
 
     if (!s_coex_wifi_inited) {
         wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+        wifi_coex_shrink_buffers(&cfg);
         esp_err_t err = esp_wifi_init(&cfg);
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "wifi_coex: esp_wifi_init failed (%s)", esp_err_to_name(err));
+            ESP_LOGE(TAG, "wifi_coex: esp_wifi_init failed (%s) — free heap %u, "
+                          "largest block %u", esp_err_to_name(err),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
             wifi_coex_teardown();
             s_coex_active = false;
             vTaskDelete(NULL);
