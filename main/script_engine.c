@@ -303,18 +303,22 @@ static int l_endpoint_set(lua_State *L)
 
     const char *attr = luaL_checkstring(L, 1);
 
+    /* A slot writes its own endpoint. The fan-out variants exist for the
+     * built-in sensor callbacks, which have no slot to speak of; using them here
+     * makes every slot of the same type overwrite the others, so with two
+     * Temperature Sensors both report whichever script ran last. */
     if (strcmp(attr, "occupied") == 0) {
         bool val = lua_toboolean(L, 2);
         ESP_LOGI(TAG, "slot %d: set occupied=%d", slot, val);
-        matter_update_occupancy(val);
+        matter_update_occupancy_ep(s_slots[slot].endpoint_id, val);
     } else if (strcmp(attr, "measured_value") == 0) {
         int val = (int)luaL_checkinteger(L, 2);
         ESP_LOGI(TAG, "slot %d: set measured_value=%d", slot, val);
-        matter_update_temperature((int16_t)val);
+        matter_update_temperature_ep(s_slots[slot].endpoint_id, (int16_t)val);
     } else if (strcmp(attr, "illuminance") == 0) {
         double lux = (double)luaL_checknumber(L, 2);
         ESP_LOGI(TAG, "slot %d: set illuminance=%.1f lux", slot, lux);
-        matter_update_illuminance((float)lux);
+        matter_update_illuminance_ep(s_slots[slot].endpoint_id, (float)lux);
     } else if (strcmp(attr, "on_off") == 0) {
         bool val = lua_toboolean(L, 2);
         ESP_LOGI(TAG, "slot %d: set on_off=%d", slot, val);
