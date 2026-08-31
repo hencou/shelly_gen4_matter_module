@@ -65,6 +65,15 @@ esp_err_t script_engine_init(void);
 /* Load all slot configs from NVS and start scripts */
 esp_err_t script_engine_start(void);
 
+/* Free the Lua runtimes (one per configured slot, tens of kB together) so the
+ * WiFi driver can be initialised on a node that has its endpoints configured.
+ * Endpoints, their last reported values and the slot configs stay; only script
+ * execution pauses. Blocks until the script task has applied it. */
+esp_err_t script_engine_suspend(void);
+
+/* Recompile every configured slot and continue executing. */
+esp_err_t script_engine_resume(void);
+
 /* Get slot configuration (for web interface) */
 esp_err_t script_slot_get(uint8_t slot, script_slot_config_t *cfg);
 
