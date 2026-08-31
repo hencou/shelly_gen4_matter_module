@@ -21,6 +21,7 @@
 #include "button.h"
 #include "sensors.h"
 #include "status_led.h"
+#include "script_engine.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -365,6 +366,8 @@ static esp_event_handler_instance_t s_coex_evt_any = NULL;
 static esp_event_handler_instance_t s_coex_evt_ip  = NULL;
 /* Set when WiFi could only be served by taking Thread down entirely. */
 static bool s_coex_thread_down = false;
+/* Set while the Lua runtimes are freed to make room for the WiFi driver. */
+static bool s_coex_scripts_suspended = false;
 
 /* Give the radio and the Thread role back. Safe to call after a partial start. */
 static void wifi_coex_teardown(void)
@@ -392,6 +395,11 @@ static void wifi_coex_teardown(void)
          * again and gets the whole radio back. */
         esp_coex_ieee802154_status_enable();
 #endif
+    }
+
+    if (s_coex_scripts_suspended) {
+        script_engine_resume();
+        s_coex_scripts_suspended = false;
     }
 
     if (s_coex_thread_down) {
@@ -510,16 +518,19 @@ static esp_err_t wifi_coex_start_ap(void)
  * "malloc buffer fail" / "Expected to init 10 rx buffer, actual is 6" and
  * esp_wifi_init() returns ESP_ERR_NO_MEM, so the window never opens. These
  * counts cost throughput, not reachability, which is the right trade for a
- * dashboard. rx_ba_win stays within the driver's limits (<= static_rx_buf_num *
- * 2 and <= dynamic_rx_buf_num / 2). */
+ * dashboard. Block acknowledgement goes off with them: an AMPDU window needs
+ * its own reorder buffers, and rx_ba_win has to be 0 when AMPDU RX is off. */
 static void wifi_coex_shrink_buffers(wifi_init_config_t *cfg)
 {
-    cfg->static_rx_buf_num  = 4;
-    cfg->dynamic_rx_buf_num = 16;
-    cfg->dynamic_tx_buf_num = 16;
+    cfg->static_rx_buf_num  = 3;
+    cfg->dynamic_rx_buf_num = 8;
+    cfg->dynamic_tx_buf_num = 8;
     cfg->rx_mgmt_buf_num    = 5;
-    cfg->mgmt_sbuf_num      = 8;
-    cfg->rx_ba_win          = 4;
+    cfg->mgmt_sbuf_num      = 6;
+    cfg->ampdu_rx_enable    = 0;
+    cfg->ampdu_tx_enable    = 0;
+    cfg->amsdu_tx_enable    = 0;
+    cfg->rx_ba_win          = 0;
 }
 
 static void wifi_coex_task(void *arg)
@@ -547,15 +558,24 @@ static void wifi_coex_task(void *arg)
     matter_thread_router_eligible_set(false);
     wifi_coex_yield_radio();
 
+    /* Each configured slot carries its own Lua interpreter, and together they
+     * hold the heap the WiFi driver needs: with 5 slots the free heap is down to
+     * ~28 kB and esp_wifi_init() cannot even get 3 static RX buffers
+     * ("malloc buffer fail" / ESP_ERR_NO_MEM), so the window never opens. The
+     * window is for managing the device, so the scripts pause for it; the
+     * endpoints and their last reported values stay in place. */
+    if (script_engine_suspend() == ESP_OK) s_coex_scripts_suspended = true;
+
     if (!s_coex_wifi_inited) {
         wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
         wifi_coex_shrink_buffers(&cfg);
         esp_err_t err = esp_wifi_init(&cfg);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "wifi_coex: esp_wifi_init failed (%s) — free heap %u, "
-                          "largest block %u", esp_err_to_name(err),
+                          "largest block %u, internal %u", esp_err_to_name(err),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
             wifi_coex_teardown();
             s_coex_active = false;
             vTaskDelete(NULL);

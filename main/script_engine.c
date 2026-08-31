@@ -31,6 +31,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "esp_heap_caps.h"
 
 #include "lua.h"
 #include "lauxlib.h"
@@ -55,6 +56,11 @@ typedef struct {
 static script_slot_t s_slots[SCRIPT_MAX_SLOTS];
 static TaskHandle_t s_task = NULL;
 static QueueHandle_t s_event_queue = NULL;
+
+/* Requested by script_engine_suspend/resume, applied by the script task itself
+ * so a state is never closed while one of its scripts is running. */
+static volatile bool s_suspend_req = false;
+static volatile bool s_suspended   = false;
 
 /* Shared input state (updated from ISR/sensor callbacks) */
 static volatile int16_t s_temperature_centi = 0;
@@ -514,6 +520,35 @@ static bool compile_and_load(script_slot_t *slot, uint8_t idx)
     return true;
 }
 
+/* Build the runtime for a slot whose config is already loaded. */
+static bool slot_start(uint8_t idx)
+{
+    script_slot_t *slot = &s_slots[idx];
+    if (slot->cfg.type == SLOT_TYPE_NONE) return false;
+    if (strlen(slot->cfg.script) == 0) return false;
+
+    slot->endpoint_id = matter_get_slot_endpoint(idx);
+    slot->L = create_lua_state(idx);
+    if (slot->L && compile_and_load(slot, idx)) {
+        slot->active = true;
+        return true;
+    }
+    if (slot->L) {
+        lua_close(slot->L);
+        slot->L = NULL;
+    }
+    return false;
+}
+
+static void slot_stop(uint8_t idx)
+{
+    if (s_slots[idx].L) {
+        lua_close(s_slots[idx].L);
+        s_slots[idx].L = NULL;
+    }
+    s_slots[idx].active = false;
+}
+
 /* ---------- Script execution ---------- */
 
 static void run_slot_script(script_slot_t *slot, uint8_t idx)
@@ -564,11 +599,34 @@ static void process_button_event(const script_event_t *evt)
     s_btn_event_pending = false;
 }
 
+/* Runs on the script task, so no script is executing while states go away. */
+static void apply_suspend_state(void)
+{
+    if (s_suspend_req) {
+        for (int i = 0; i < SCRIPT_MAX_SLOTS; i++) slot_stop(i);
+        s_suspended = true;
+        ESP_LOGW(TAG, "scripts suspended, Lua runtimes freed (free heap %u, "
+                      "largest block %u)",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    } else {
+        int active = 0;
+        for (int i = 0; i < SCRIPT_MAX_SLOTS; i++) {
+            if (slot_start(i)) active++;
+        }
+        s_suspended = false;
+        ESP_LOGW(TAG, "scripts resumed: %d active slots (free heap %u)", active,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT));
+    }
+}
+
 static void script_engine_task(void *arg)
 {
     (void)arg;
 
     while (1) {
+        if (s_suspend_req != s_suspended) apply_suspend_state();
+
         /* Calculate sleep: time until next periodic script is due (max 500ms) */
         TickType_t now = xTaskGetTickCount();
         TickType_t wait = pdMS_TO_TICKS(500);
@@ -631,20 +689,16 @@ esp_err_t script_engine_start(void)
     /* Load all slots from NVS */
     int active_count = 0;
     for (int i = 0; i < SCRIPT_MAX_SLOTS; i++) {
-        if (slot_load(i, &s_slots[i].cfg) == ESP_OK && s_slots[i].cfg.type != SLOT_TYPE_NONE) {
-            /* Get dynamically assigned endpoint ID from matter_device */
-            s_slots[i].endpoint_id = matter_get_slot_endpoint(i);
+        if (slot_load(i, &s_slots[i].cfg) != ESP_OK) continue;
+        if (s_slots[i].cfg.type == SLOT_TYPE_NONE) continue;
 
-            s_slots[i].L = create_lua_state(i);
-            if (s_slots[i].L && compile_and_load(&s_slots[i], i)) {
-                s_slots[i].active = true;
-                active_count++;
-                ESP_LOGI(TAG, "slot %d: '%s' type=%d trigger=%d ep=%u active",
-                         i, s_slots[i].cfg.name, s_slots[i].cfg.type,
-                         s_slots[i].cfg.trigger, s_slots[i].endpoint_id);
-            } else {
-                ESP_LOGW(TAG, "slot %d: failed to compile script", i);
-            }
+        if (slot_start(i)) {
+            active_count++;
+            ESP_LOGI(TAG, "slot %d: '%s' type=%d trigger=%d ep=%u active",
+                     i, s_slots[i].cfg.name, s_slots[i].cfg.type,
+                     s_slots[i].cfg.trigger, s_slots[i].endpoint_id);
+        } else {
+            ESP_LOGW(TAG, "slot %d: failed to compile script", i);
         }
     }
 
@@ -659,6 +713,31 @@ esp_err_t script_engine_start(void)
 
     ESP_LOGI(TAG, "script engine started: %d active slots", active_count);
     return ESP_OK;
+}
+
+/* Wait for the script task to pick the request up; it polls at most every
+ * 500 ms, plus whatever a running script still needs to finish. */
+static esp_err_t wait_for_suspend_state(bool want, uint32_t timeout_ms)
+{
+    for (uint32_t waited = 0; waited < timeout_ms; waited += 50) {
+        if (s_suspended == want) return ESP_OK;
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    return s_suspended == want ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+esp_err_t script_engine_suspend(void)
+{
+    if (!s_task) return ESP_ERR_INVALID_STATE;
+    s_suspend_req = true;
+    return wait_for_suspend_state(true, 3000);
+}
+
+esp_err_t script_engine_resume(void)
+{
+    if (!s_task) return ESP_ERR_INVALID_STATE;
+    s_suspend_req = false;
+    return wait_for_suspend_state(false, 3000);
 }
 
 esp_err_t script_slot_get(uint8_t slot, script_slot_config_t *cfg)
@@ -684,8 +763,9 @@ esp_err_t script_slot_set(uint8_t slot, const script_slot_config_t *cfg)
     esp_err_t err = slot_save(slot, cfg);
     if (err != ESP_OK) return err;
 
-    /* Start new script if type != NONE */
-    if (cfg->type != SLOT_TYPE_NONE && strlen(cfg->script) > 0) {
+    /* Start new script if type != NONE. While suspended the runtimes are gone
+     * on purpose (heap for the WiFi window); resuming picks the new config up. */
+    if (!s_suspended && cfg->type != SLOT_TYPE_NONE && strlen(cfg->script) > 0) {
         s_slots[slot].L = create_lua_state(slot);
         if (s_slots[slot].L && compile_and_load(&s_slots[slot], slot)) {
             s_slots[slot].active = true;
