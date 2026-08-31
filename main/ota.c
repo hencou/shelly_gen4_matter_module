@@ -600,8 +600,16 @@ static void wifi_coex_task(void *arg)
             wifi_coex_sta_stop();
             need_ap = true;
         } else {
-            /* Modem sleep leaves the radio to Thread between WiFi beacons. */
-            esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+            /* No modem sleep: Thread already gave up the radio (sleepy link
+             * mode, it only wakes to poll its parent), so the gaps between
+             * beacons buy nothing, while the AP holds every downstream frame
+             * until the next listen interval — with DTIM 2 and a negotiated
+             * interval of 4 beacons that is ~0.4 s per round trip. The 30 kB
+             * dashboard and the 8 kB log poll then outlast the 10 s httpd send
+             * timeout and the request dies with "httpd_sock_err: error in send:
+             * 11" (EAGAIN). The window exists to manage the device, so give it
+             * the radio for those ten minutes. */
+            esp_wifi_set_ps(WIFI_PS_NONE);
             ESP_LOGW(TAG, "wifi_coex: STA-only connecting to '%s' (source: %s), %s",
                      ssid, from_compile_time ? "compile-time" : "NVS",
                      s_coex_thread_down ? "Thread is down until the window closes"
@@ -643,7 +651,9 @@ static void wifi_coex_task(void *arg)
         int left = (int)((s_coex_deadline_us - esp_timer_get_time()) / 1000000);
         if (left > 0 && left % 60 == 0 && left != last_logged) {
             last_logged = left;
-            ESP_LOGI(TAG, "wifi_coex: %d s remaining", left);
+            ESP_LOGI(TAG, "wifi_coex: %d s remaining (free heap %u, largest block %u)",
+                     left, (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
         }
     }
 

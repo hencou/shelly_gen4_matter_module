@@ -42,6 +42,12 @@ void matter_update_occupancy(bool occupied);
 /* Report illuminance in lux; encoded to Matter MeasuredValue internally. */
 void matter_update_illuminance(float lux);
 
+/* Same updates scoped to one endpoint, for a Lua slot that owns its endpoint.
+ * No-op when endpoint_id is 0. */
+void matter_update_temperature_ep(uint16_t endpoint_id, int16_t centi_c);
+void matter_update_occupancy_ep(uint16_t endpoint_id, bool occupied);
+void matter_update_illuminance_ep(uint16_t endpoint_id, float lux);
+
 /* Set a Contact/BooleanState server endpoint (per-slot endpoint id). */
 void matter_update_boolean_state(uint16_t endpoint_id, bool state);
 

@@ -1001,26 +1001,32 @@ extern "C" void matter_send_color_temp_stop(uint16_t ep)
 
 
 
-extern "C" void matter_update_temperature(int16_t centi_c)
+extern "C" void matter_update_temperature_ep(uint16_t endpoint_id, int16_t centi_c)
 {
+    if (!endpoint_id) return;
     /* Matter 1.5.1 / newer connectedhomeip no longer generates the Get/Set
      * accessors here, so use the esp-matter attribute store update path (locks
      * the stack internally). MeasuredValue is a nullable int16. */
     esp_matter_attr_val_t v = esp_matter_nullable_int16(nullable<int16_t>(centi_c));
-    for (int i = 0; i < s_num_slots; i++) {
-        if (s_slot_types[i] == SLOT_TYPE_TEMPERATURE && s_slot_endpoints[i]) {
-            esp_err_t err = attribute::update(s_slot_endpoints[i], TemperatureMeasurement::Id,
-                TemperatureMeasurement::Attributes::MeasuredValue::Id, &v);
-            if (err != ESP_OK) {
-                ESP_LOGW(TAG, "temperature update EP%u failed: %s",
-                         s_slot_endpoints[i], esp_err_to_name(err));
-            }
-        }
+    esp_err_t err = attribute::update(endpoint_id, TemperatureMeasurement::Id,
+        TemperatureMeasurement::Attributes::MeasuredValue::Id, &v);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "temperature update EP%u failed: %s",
+                 endpoint_id, esp_err_to_name(err));
     }
 }
 
-extern "C" void matter_update_illuminance(float lux)
+extern "C" void matter_update_temperature(int16_t centi_c)
 {
+    for (int i = 0; i < s_num_slots; i++) {
+        if (s_slot_types[i] == SLOT_TYPE_TEMPERATURE)
+            matter_update_temperature_ep(s_slot_endpoints[i], centi_c);
+    }
+}
+
+extern "C" void matter_update_illuminance_ep(uint16_t endpoint_id, float lux)
+{
+    if (!endpoint_id) return;
     /* Matter encodes illuminance as MeasuredValue = 10000*log10(lux)+1 (uint16,
      * range 1..0xFFFE); 0 means "unknown / too dark". */
     uint16_t measured;
@@ -1033,32 +1039,41 @@ extern "C" void matter_update_illuminance(float lux)
         measured = (uint16_t)enc;
     }
     esp_matter_attr_val_t v = esp_matter_nullable_uint16(nullable<uint16_t>(measured));
+    esp_err_t err = attribute::update(endpoint_id, IlluminanceMeasurement::Id,
+        IlluminanceMeasurement::Attributes::MeasuredValue::Id, &v);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "illuminance update EP%u failed: %s",
+                 endpoint_id, esp_err_to_name(err));
+    }
+}
+
+extern "C" void matter_update_illuminance(float lux)
+{
     for (int i = 0; i < s_num_slots; i++) {
-        if (s_slot_types[i] == SLOT_TYPE_ILLUMINANCE && s_slot_endpoints[i]) {
-            esp_err_t err = attribute::update(s_slot_endpoints[i], IlluminanceMeasurement::Id,
-                IlluminanceMeasurement::Attributes::MeasuredValue::Id, &v);
-            if (err != ESP_OK) {
-                ESP_LOGW(TAG, "illuminance update EP%u failed: %s",
-                         s_slot_endpoints[i], esp_err_to_name(err));
-            }
-        }
+        if (s_slot_types[i] == SLOT_TYPE_ILLUMINANCE)
+            matter_update_illuminance_ep(s_slot_endpoints[i], lux);
+    }
+}
+
+extern "C" void matter_update_occupancy_ep(uint16_t endpoint_id, bool occupied)
+{
+    if (!endpoint_id) return;
+    /* Occupancy is a bitmap8; update via the esp-matter attribute store (locks
+     * the stack internally) as the generated Set accessor is gone in 1.5.1. */
+    esp_matter_attr_val_t v = esp_matter_bitmap8(occupied ? 1 : 0);
+    esp_err_t err = attribute::update(endpoint_id, OccupancySensing::Id,
+        OccupancySensing::Attributes::Occupancy::Id, &v);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "occupancy update EP%u failed: %s",
+                 endpoint_id, esp_err_to_name(err));
     }
 }
 
 extern "C" void matter_update_occupancy(bool occupied)
 {
-    /* Occupancy is a bitmap8; update via the esp-matter attribute store (locks
-     * the stack internally) as the generated Set accessor is gone in 1.5.1. */
-    esp_matter_attr_val_t v = esp_matter_bitmap8(occupied ? 1 : 0);
     for (int i = 0; i < s_num_slots; i++) {
-        if (s_slot_types[i] == SLOT_TYPE_OCCUPANCY && s_slot_endpoints[i]) {
-            esp_err_t err = attribute::update(s_slot_endpoints[i], OccupancySensing::Id,
-                OccupancySensing::Attributes::Occupancy::Id, &v);
-            if (err != ESP_OK) {
-                ESP_LOGW(TAG, "occupancy update EP%u failed: %s",
-                         s_slot_endpoints[i], esp_err_to_name(err));
-            }
-        }
+        if (s_slot_types[i] == SLOT_TYPE_OCCUPANCY)
+            matter_update_occupancy_ep(s_slot_endpoints[i], occupied);
     }
 }
 
