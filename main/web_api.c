@@ -1221,7 +1221,12 @@ void web_api_start_httpd(void)
     httpd_config_t hc = HTTPD_DEFAULT_CONFIG();
     hc.stack_size         = 8192;
     hc.recv_wait_timeout  = 30;
-    hc.send_wait_timeout  = 10;
+    /* Both radios share one antenna: over Thread the node polls its parent, and
+     * during the temporary WiFi window the station sleeps between beacons, so a
+     * single send can stall for hundreds of milliseconds. With 10 s the 30 kB
+     * dashboard died as "httpd_sock_err: error in send : 11" (EAGAIN) instead of
+     * just being slow. */
+    hc.send_wait_timeout  = 30;
     /* A browser holds several keep-alive sockets open per tab and the Log and
      * Hardware tabs poll on top of that, so the listener runs out of slots.
      * Without lru_purge_enable the next request is not served until an idle
