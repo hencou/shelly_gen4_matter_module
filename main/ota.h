@@ -81,6 +81,13 @@ bool ota_load_credentials(char *ssid, size_t ssidlen,
  * Call after successful boot + Thread/Matter join. */
 void ota_mark_app_valid(void);
 
+/* Factory reset: flag it and reboot; the wipe itself runs at the next boot
+ * (ota_factory_reset_at_boot, right after nvs_flash_init) before Matter and
+ * OpenThread have any NVS handle open, so nothing writes into a half-erased
+ * partition. */
+esp_err_t ota_factory_reset_request(void);
+void      ota_factory_reset_at_boot(void);
+
 /* SRP Server mode: enable Thread DNS-SD service discovery without full TBR.
  * When enabled, the Shelly runs an SRP server so other Thread devices can
  * register and resolve services (needed for CASE sessions without a TBR).

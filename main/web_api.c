@@ -497,13 +497,16 @@ static esp_err_t api_wifi_coex_post(httpd_req_t *req)
 
 static esp_err_t api_factory_reset_post(httpd_req_t *req)
 {
+    esp_err_t err = ota_factory_reset_request();
+    if (err != ESP_OK) {
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        return httpd_resp_sendstr(req, esp_err_to_name(err));
+    }
     httpd_resp_sendstr(req, "OK");
-    ESP_LOGW(TAG, "Factory reset via web: wiping nvs");
+    ESP_LOGW(TAG, "Factory reset via web: nvs is wiped at the next boot");
     /* Hand the SRP name back first: the wipe takes the client key with it, and
      * the server would otherwise refuse the same host name under the new key. */
     matter_srp_deregister(3000);
-    nvs_flash_deinit();
-    nvs_flash_erase();
     vTaskDelay(pdMS_TO_TICKS(500));
     esp_restart();
     return ESP_OK;
