@@ -160,6 +160,9 @@ After flashing (or a factory reset via the web interface) the module comes up in
 4. After ~30-60s the device appears in HA
 
 A module that is already commissioned skips this and goes straight to Thread.
+Removing the device from its last controller (e.g. deleting it in Home
+Assistant) reboots it into this commissioning mode a few seconds later; WiFi
+credentials and scripts are kept.
 
 ### 3. Configure endpoints via the dashboard
 
@@ -224,10 +227,16 @@ needs no border-router glue at all.
 
 #### Switch to WiFi for faster management
 
-**Enable WiFi 10 min** on the dashboard (**WiFi & OTA** tab) joins WiFi as a
-**station** next to a running Thread network, **without a reboot**, and switches
-WiFi off again after 10 minutes. Pressing it again extends the window; pressing
-it while the window is open closes it early.
+The **WiFi** buttons on the dashboard (**WiFi & OTA** tab) join WiFi as a
+**station** next to a running Thread network, **without a reboot**:
+
+- **10 min** switches WiFi off again after 10 minutes; pressing it again
+  extends the window.
+- **Always on** keeps WiFi up permanently and restores it after every reboot
+  (stored in flash). Unlike the 10-minute window it never pauses the Lua
+  scripts, so it needs enough free heap for the WiFi driver next to the
+  configured slots — with many slots use the 10-minute window instead.
+- **Off** closes the window or ends "always on".
 
 The physical shortcut does exactly the same: **press any button 6× rapidly**
 (within 2.5 seconds). Use that when the dashboard is unreachable over Thread.
@@ -450,7 +459,7 @@ The relay functions take an **optional 1-based channel** argument (`1` = relay 1
 |---|---|---|---|
 | **Not commissioned** | OFF | ON (BLE commissioning) | After flash or factory reset |
 | **Commissioned** (normal) | OFF | ON (Thread active) | Dashboard over Thread |
-| **Temporary WiFi** (management) | ON — STA, SoftAP when STA fails | Thread active as End Device (no router role, no SRP fallback; sleepy child during SoftAP, or Thread down if sleepy is refused) | "Enable WiFi 10 min" button or 6× press — no reboot, restores itself after 10 min |
+| **WiFi next to Thread** (management) | ON — STA, SoftAP when STA fails | Thread active as sleepy End Device (no router role, no SRP fallback; Thread down if sleepy is refused) | "10 min" / "Always on" buttons or 6× press — no reboot; 10-min window restores itself, "Always on" survives reboots |
 
 ## Status LED
 

@@ -1192,10 +1192,10 @@ static void thread_watchdog_cb(void *)
      * here would kill the very window the user just asked for, so the watchdog
      * holds off — the window closes itself and restores a full Thread radio,
      * after which counting starts from zero. */
-    if (ota_wifi_coex_seconds_left() > 0) {
+    if (ota_wifi_coex_active()) {
         s_twdg_detached_ticks = 0;
-        ESP_LOGI(TAG, "Thread detached while temporary WiFi is on — watchdog waits "
-                      "for the window to close");
+        ESP_LOGI(TAG, "Thread detached while WiFi is on — watchdog waits "
+                      "for WiFi to go off");
         return;
     }
 

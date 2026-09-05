@@ -33,6 +33,7 @@ extern "C" {
 }
 
 #include "matter_device.h"
+#include <esp_matter.h>
 #include <app/server/Server.h>
 #include <credentials/GroupDataProvider.h>
 #include <lib/core/CHIPError.h>
@@ -90,6 +91,51 @@ static void on_commissioning_complete(const chip::DeviceLayer::ChipDeviceEvent *
     };
     if (esp_timer_create(&args, &s_commissioned_timer) == ESP_OK)
         esp_timer_start_once(s_commissioned_timer, 3 * 1000 * 1000);  /* 3 s */
+}
+
+/* The controller removed the last fabric (e.g. the device was deleted in Home
+ * Assistant). The SDK does not reopen the commissioning window on its own, and
+ * with CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING the BLE stack was shut down after
+ * the first commissioning, so the node would sit unreachable until a manual
+ * reset. A reboot puts it back into the uncommissioned boot path (BLE
+ * advertising, slow-blinking LED). Delayed so the RemoveFabric response and
+ * its ack still go out over the closing session. */
+static esp_timer_handle_t s_last_fabric_timer = NULL;
+
+static void on_fabric_removed(const chip::DeviceLayer::ChipDeviceEvent *event,
+                              intptr_t /*arg*/)
+{
+    if (event->Type != chip::DeviceLayer::DeviceEventType::kFabricRemoved) return;
+    if (chip::Server::GetInstance().GetFabricTable().FabricCount() > 0) return;
+    if (s_last_fabric_timer) return;
+
+    ESP_LOGW(TAG, "last fabric removed — rebooting into commissioning mode in 3 s");
+    const esp_timer_create_args_t args = {
+        .callback = [](void *) { esp_restart(); },
+        .arg = nullptr,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "recommission",
+        .skip_unhandled_events = true,
+    };
+    if (esp_timer_create(&args, &s_last_fabric_timer) == ESP_OK)
+        esp_timer_start_once(s_last_fabric_timer, 3 * 1000 * 1000);  /* 3 s */
+}
+
+/* "Always on" WiFi from NVS, once Thread has had a moment to attach so the
+ * sleepy-mode switch lands on an attached node. */
+static esp_timer_handle_t s_wifi_boot_timer = NULL;
+
+static void schedule_wifi_mode_boot(void)
+{
+    const esp_timer_create_args_t args = {
+        .callback = [](void *) { ota_wifi_mode_boot(); },
+        .arg = nullptr,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "wifi_boot",
+        .skip_unhandled_events = true,
+    };
+    if (esp_timer_create(&args, &s_wifi_boot_timer) == ESP_OK)
+        esp_timer_start_once(s_wifi_boot_timer, 15 * 1000 * 1000);  /* 15 s */
 }
 
 extern "C" void on_button_event(input_id_t id, button_event_t evt)
@@ -188,6 +234,17 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "BOOT-STEP: matter_start() done");
 
     bool commissioned = chip::Server::GetInstance().GetFabricTable().FabricCount() > 0;
+
+    {
+        CHIP_ERROR cerr =
+            chip::DeviceLayer::PlatformMgr().AddEventHandler(on_fabric_removed, 0);
+        if (cerr != CHIP_NO_ERROR) {
+            ESP_LOGE(TAG, "fabric-removed handler not registered: %" CHIP_ERROR_FORMAT,
+                     cerr.Format());
+        }
+    }
+
+    schedule_wifi_mode_boot();
 
     if (commissioned) {
         start_commissioned_services();
