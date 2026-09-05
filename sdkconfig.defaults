@@ -51,6 +51,14 @@ CONFIG_MBEDTLS_ECJPAKE_C=y
 CONFIG_MBEDTLS_KEY_EXCHANGE_ECJPAKE=y
 CONFIG_MBEDTLS_HKDF_C=y
 
+# Groups / bindings: every script slot may carry its own group bindings (each
+# group needs a GroupKeySet on this node), so size for 8 endpoints with 4
+# groups apiece. Defaults are 1 endpoint x 4 groups, 3 key sets, 10 bindings.
+CONFIG_MAX_GROUP_ENDPOINTS_PER_FABRIC=8
+CONFIG_MAX_GROUPS_PER_FABRIC_PER_ENDPOINT=4
+CONFIG_MAX_GROUP_KEYS_PER_FABRIC=16
+CONFIG_ESP_MATTER_BINDING_TABLE_SIZE=16
+
 # Matter logs — CHIP verbosity follows LOG_DEFAULT_LEVEL by default
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
