@@ -381,6 +381,34 @@ static bool wifi_coex_open(void)
     return s_coex_persistent || esp_timer_get_time() < s_coex_deadline_us;
 }
 
+#define NVS_KEY_FACTORY_RST "factory_rst"
+
+esp_err_t ota_factory_reset_request(void)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(h, NVS_KEY_FACTORY_RST, 1);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+void ota_factory_reset_at_boot(void)
+{
+    nvs_handle_t h;
+    uint8_t v = 0;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        nvs_get_u8(h, NVS_KEY_FACTORY_RST, &v);
+        nvs_close(h);
+    }
+    if (!v) return;
+    ESP_LOGW(TAG, "factory reset pending: wiping nvs before Matter/Thread start");
+    nvs_flash_deinit();
+    ESP_ERROR_CHECK(nvs_flash_erase());
+    ESP_ERROR_CHECK(nvs_flash_init());
+}
+
 static void wifi_always_save(bool on)
 {
     nvs_handle_t h;
