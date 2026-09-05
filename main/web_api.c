@@ -1131,12 +1131,13 @@ static esp_err_t api_script_delete(httpd_req_t *req)
     return ESP_OK;
 }
 
-/* GET /api/diag — diagnostics: NVS usage of the "nvs" partition + the CHIP
- * binding table as the firmware actually holds it. Used to tell whether a
- * binding write persisted and whether the nvs partition is out of space. */
+/* GET /api/diag — diagnostics: NVS usage of the "nvs" partition, the
+ * commissioned fabrics and the CHIP binding table as the firmware actually
+ * holds them. Used to tell whether a binding write persisted, which fabrics
+ * still hold the device, and whether the nvs partition is out of space. */
 static esp_err_t api_diag_get(httpd_req_t *req)
 {
-    static char out[2048];
+    static char out[3072];
     int pos = 0;
 
     nvs_stats_t st;
@@ -1189,7 +1190,11 @@ static esp_err_t api_diag_get(httpd_req_t *req)
     }
 
     char bind[1024];
-    int n = matter_binding_dump(bind, sizeof(bind));
+    int n = matter_fabric_dump(bind, sizeof(bind));
+    pos += snprintf(out + pos, sizeof(out) - pos,
+        "Fabrics (%d):\n%s\n\n", n, (n > 0 ? bind : "  <none - uncommissioned>"));
+
+    n = matter_binding_dump(bind, sizeof(bind));
     pos += snprintf(out + pos, sizeof(out) - pos,
         "Binding table (%d entr%s):\n%s\n",
         n, (n == 1 ? "y" : "ies"), (n > 0 ? bind : "  <empty>"));

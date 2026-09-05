@@ -144,6 +144,10 @@ void matter_factory_reset(void);
  * API (partition-agnostic). Keeps scripts + WiFi config. Caller reboots after. */
 void matter_delete_all_fabrics(void);
 
+/* Diagnostics: dump the commissioned fabrics (index, compressed fabric ID,
+ * node ID, vendor, label). Returns the number of fabrics. */
+int matter_fabric_dump(char *buf, size_t buf_len);
+
 /* Diagnostics: dump the current CHIP Binding table into a human-readable
  * string. Returns the number of entries found. */
 int matter_binding_dump(char *buf, size_t buf_len);
