@@ -1770,6 +1770,32 @@ extern "C" void matter_delete_all_fabrics(void)
     ESP_LOGW(TAG, "matter_delete_all_fabrics: removed %u fabric(s)", (unsigned)count);
 }
 
+extern "C" int matter_fabric_dump(char *buf, size_t buf_len)
+{
+    if (!buf || buf_len == 0) return 0;
+    size_t off = 0;
+    int count = 0;
+
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    for (const auto &fb : chip::Server::GetInstance().GetFabricTable()) {
+        count++;
+        chip::PeerId peer = fb.GetPeerId();
+        chip::CharSpan label = fb.GetFabricLabel();
+        int n = snprintf(buf + off, buf_len - off,
+            "%s[%u] compressed_fabric=%016llX node=0x%llX vendor=0x%04X label=\"%.*s\"",
+            (off > 0 ? "\n" : ""), (unsigned) fb.GetFabricIndex(),
+            (unsigned long long) peer.GetCompressedFabricId(),
+            (unsigned long long) peer.GetNodeId(), (unsigned) fb.GetVendorId(),
+            (int) label.size(), label.data() ? label.data() : "");
+        if (n < 0 || (size_t) n >= buf_len - off) { off = buf_len - 1; break; }
+        off += n;
+    }
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+
+    buf[off] = '\0';
+    return count;
+}
+
 extern "C" int matter_binding_dump(char *buf, size_t buf_len)
 {
     if (!buf || buf_len == 0) return 0;
