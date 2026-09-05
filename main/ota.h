@@ -43,8 +43,26 @@ esp_err_t ota_wifi_coex_start(void);
 /* Close the temporary WiFi window early (teardown runs asynchronously). */
 esp_err_t ota_wifi_coex_stop(void);
 
-/* Seconds left in the temporary WiFi window; 0 when it is not open. */
+/* Seconds left in the temporary WiFi window; 0 when it is not open or when
+ * WiFi is "always on" (no deadline). */
 int ota_wifi_coex_seconds_left(void);
+
+/* True while WiFi runs next to Thread, temporary or always on. */
+bool ota_wifi_coex_active(void);
+
+/* WiFi next to Thread: off, the 10-minute window, or always on. "Always on" is
+ * stored in NVS and restarted at boot; it never pauses the Lua scripts, so it
+ * needs enough free heap for the WiFi driver next to the configured slots. */
+typedef enum {
+    OTA_WIFI_OFF    = 0,
+    OTA_WIFI_TEMP   = 1,
+    OTA_WIFI_ALWAYS = 2,
+} ota_wifi_mode_t;
+
+esp_err_t       ota_wifi_mode_set(ota_wifi_mode_t mode);
+ota_wifi_mode_t ota_wifi_mode_get(void);
+/* Start WiFi at boot when "always on" is stored. Call once Thread is up. */
+void            ota_wifi_mode_boot(void);
 
 /* True while the SoftAP fallback keeps Thread down on purpose, so a detached
  * Thread is expected and must not be treated as a fault. */

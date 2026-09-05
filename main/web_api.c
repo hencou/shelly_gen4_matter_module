@@ -270,7 +270,9 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
 
     char wifi_temp_str[48];
     int coex_left = ota_wifi_coex_seconds_left();
-    if (coex_left > 0) {
+    if (ota_wifi_mode_get() == OTA_WIFI_ALWAYS) {
+        snprintf(wifi_temp_str, sizeof(wifi_temp_str), "ALWAYS ON");
+    } else if (coex_left > 0) {
         snprintf(wifi_temp_str, sizeof(wifi_temp_str), "ON (%d s left)", coex_left);
     } else {
         snprintf(wifi_temp_str, sizeof(wifi_temp_str), "OFF");
@@ -462,23 +464,35 @@ static esp_err_t api_restart_post(httpd_req_t *req)
     return ESP_OK;
 }
 
-/* Temporary WiFi STA alongside Thread, without a reboot. Toggles the window:
- * open it for 10 minutes, or close it early when it is already open. Matter and
- * the Thread management page keep running throughout. Same action as 6x clicks
- * on any input. */
+/* WiFi STA alongside Thread, without a reboot. Query ?mode=off|temp|always:
+ * close the window, open it for 10 minutes (6x clicks do the same), or keep
+ * WiFi on permanently (stored in NVS, restarted at boot). Without a mode the
+ * request toggles the 10-minute window. Matter and the Thread management page
+ * keep running throughout. */
 static esp_err_t api_wifi_coex_post(httpd_req_t *req)
 {
-    if (ota_wifi_coex_seconds_left() > 0) {
-        ota_wifi_coex_stop();
-        return httpd_resp_sendstr(req, "Closing the WiFi window");
+    char qs[32] = {0}, mode[8] = {0};
+    if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) == ESP_OK)
+        httpd_query_key_value(qs, "mode", mode, sizeof(mode));
+
+    ota_wifi_mode_t want;
+    const char *msg;
+    if (strcmp(mode, "off") == 0) {
+        want = OTA_WIFI_OFF;    msg = "WiFi off";
+    } else if (strcmp(mode, "always") == 0) {
+        want = OTA_WIFI_ALWAYS; msg = "WiFi always on next to Thread (kept after reboot)";
+    } else if (strcmp(mode, "temp") == 0 || ota_wifi_mode_get() == OTA_WIFI_OFF) {
+        want = OTA_WIFI_TEMP;   msg = "WiFi enabled for 10 minutes, Thread stays up";
+    } else {
+        want = OTA_WIFI_OFF;    msg = "Closing the WiFi window";
     }
 
-    esp_err_t err = ota_wifi_coex_start();
+    esp_err_t err = ota_wifi_mode_set(want);
     if (err != ESP_OK) {
         httpd_resp_set_status(req, "409 Conflict");
         return httpd_resp_sendstr(req, esp_err_to_name(err));
     }
-    return httpd_resp_sendstr(req, "WiFi enabled for 10 minutes, Thread stays up");
+    return httpd_resp_sendstr(req, msg);
 }
 
 static esp_err_t api_factory_reset_post(httpd_req_t *req)

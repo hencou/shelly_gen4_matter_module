@@ -57,6 +57,7 @@ static const char *TAG = "ota";
 #define NVS_KEY_URL         "url"
 #define NVS_KEY_BENCH       "bench"
 #define NVS_KEY_SRP         "srp"
+#define NVS_KEY_WIFI_ALWAYS "wifi_always"
 #define NVS_KEY_HOSTNAME    "hostname"
 
 /* Runtime bench mode — initialised from NVS in bench_mode_init(). */
@@ -372,6 +373,32 @@ static esp_event_handler_instance_t s_coex_evt_ip  = NULL;
 static bool s_coex_thread_down = false;
 /* Set while the Lua runtimes are freed to make room for the WiFi driver. */
 static bool s_coex_scripts_suspended = false;
+/* "Always on": the window has no deadline and survives a reboot (NVS). */
+static volatile bool s_coex_persistent = false;
+
+static bool wifi_coex_open(void)
+{
+    return s_coex_persistent || esp_timer_get_time() < s_coex_deadline_us;
+}
+
+static void wifi_always_save(bool on)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_u8(h, NVS_KEY_WIFI_ALWAYS, on ? 1 : 0);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+static bool wifi_always_load(void)
+{
+    nvs_handle_t h;
+    uint8_t v = 0;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return false;
+    nvs_get_u8(h, NVS_KEY_WIFI_ALWAYS, &v);
+    nvs_close(h);
+    return v != 0;
+}
 
 /* Give the radio and the Thread role back. Safe to call after a partial start. */
 static void wifi_coex_teardown(void)
@@ -562,18 +589,25 @@ static void wifi_coex_task(void *arg)
     matter_thread_router_eligible_set(false);
     wifi_coex_yield_radio();
 
-    /* Each configured slot carries its own Lua interpreter, and together they
-     * hold the heap the WiFi driver needs: with 5 slots the free heap is down to
-     * ~28 kB and esp_wifi_init() cannot even get 3 static RX buffers
-     * ("malloc buffer fail" / ESP_ERR_NO_MEM), so the window never opens. The
-     * window is for managing the device, so the scripts pause for it; the
-     * endpoints and their last reported values stay in place. */
-    if (script_engine_suspend() == ESP_OK) s_coex_scripts_suspended = true;
-
     if (!s_coex_wifi_inited) {
         wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
         wifi_coex_shrink_buffers(&cfg);
         esp_err_t err = esp_wifi_init(&cfg);
+        /* Each configured slot carries its own Lua interpreter, and together
+         * they can hold the heap the WiFi driver needs: with 5 slots the free
+         * heap is down to ~28 kB and esp_wifi_init() cannot even get 3 static
+         * RX buffers ("malloc buffer fail" / ESP_ERR_NO_MEM). A ten-minute
+         * management window may pause the scripts for that (the endpoints and
+         * their last reported values stay in place); "always on" WiFi may not,
+         * since the scripts would then never run again. */
+        if (err == ESP_ERR_NO_MEM && !s_coex_persistent) {
+            if (script_engine_suspend() == ESP_OK) s_coex_scripts_suspended = true;
+            err = esp_wifi_init(&cfg);
+        }
+        if (err == ESP_ERR_NO_MEM && s_coex_persistent) {
+            ESP_LOGE(TAG, "wifi_coex: not enough heap for WiFi next to the configured "
+                          "scripts; use the 10-minute window or fewer slots");
+        }
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "wifi_coex: esp_wifi_init failed (%s) — free heap %u, "
                           "largest block %u, internal %u", esp_err_to_name(err),
@@ -674,8 +708,9 @@ static void wifi_coex_task(void *arg)
     }
 
     int last_logged = -1;
-    while (esp_timer_get_time() < s_coex_deadline_us) {
+    while (wifi_coex_open()) {
         vTaskDelay(pdMS_TO_TICKS(WIFI_COEX_TICK_MS));
+        if (s_coex_persistent) continue;
         int left = (int)((s_coex_deadline_us - esp_timer_get_time()) / 1000000);
         if (left > 0 && left % 60 == 0 && left != last_logged) {
             last_logged = left;
@@ -691,15 +726,9 @@ static void wifi_coex_task(void *arg)
     vTaskDelete(NULL);
 }
 
-esp_err_t ota_wifi_coex_start(void)
+static esp_err_t wifi_coex_launch(void)
 {
-    /* Pressing again while the window is open simply extends it. */
-    s_coex_deadline_us = esp_timer_get_time() + (int64_t)WIFI_COEX_WINDOW_US;
-    if (s_coex_active) {
-        ESP_LOGI(TAG, "wifi_coex: window extended to 10 min from now");
-        return ESP_OK;
-    }
-
+    if (s_coex_active) return ESP_OK;
     s_coex_active = true;
     if (xTaskCreate(wifi_coex_task, "wifi_coex", 4096, NULL, 5, NULL) != pdPASS) {
         s_coex_active = false;
@@ -709,14 +738,69 @@ esp_err_t ota_wifi_coex_start(void)
     return ESP_OK;
 }
 
+esp_err_t ota_wifi_coex_start(void)
+{
+    /* "Always on" already covers it; a 6x press must not shorten that. */
+    if (s_coex_persistent) return ESP_OK;
+    /* Pressing again while the window is open simply extends it. */
+    s_coex_deadline_us = esp_timer_get_time() + (int64_t)WIFI_COEX_WINDOW_US;
+    if (s_coex_active) {
+        ESP_LOGI(TAG, "wifi_coex: window extended to 10 min from now");
+        return ESP_OK;
+    }
+    return wifi_coex_launch();
+}
+
 esp_err_t ota_wifi_coex_stop(void)
 {
     if (!s_coex_active) return ESP_ERR_INVALID_STATE;
     /* The task owns setup and teardown; expire its window instead of tearing
      * WiFi down from another context. */
+    s_coex_persistent = false;
     s_coex_deadline_us = 0;
     ESP_LOGW(TAG, "wifi_coex: stop requested");
     return ESP_OK;
+}
+
+esp_err_t ota_wifi_mode_set(ota_wifi_mode_t mode)
+{
+    switch (mode) {
+    case OTA_WIFI_ALWAYS:
+        wifi_always_save(true);
+        s_coex_persistent = true;
+        ESP_LOGW(TAG, "wifi_coex: always on (persistent)");
+        return wifi_coex_launch();
+    case OTA_WIFI_TEMP:
+        wifi_always_save(false);
+        s_coex_persistent = false;
+        return ota_wifi_coex_start();
+    case OTA_WIFI_OFF:
+    default:
+        wifi_always_save(false);
+        s_coex_persistent = false;
+        ota_wifi_coex_stop();
+        return ESP_OK;
+    }
+}
+
+ota_wifi_mode_t ota_wifi_mode_get(void)
+{
+    if (s_coex_persistent) return OTA_WIFI_ALWAYS;
+    if (s_coex_active && esp_timer_get_time() < s_coex_deadline_us) return OTA_WIFI_TEMP;
+    return OTA_WIFI_OFF;
+}
+
+void ota_wifi_mode_boot(void)
+{
+    if (!wifi_always_load()) return;
+    ESP_LOGW(TAG, "wifi_coex: 'always on' stored — starting WiFi next to Thread");
+    s_coex_persistent = true;
+    wifi_coex_launch();
+}
+
+bool ota_wifi_coex_active(void)
+{
+    return s_coex_active && wifi_coex_open();
 }
 
 bool ota_wifi_coex_thread_parked(void)
@@ -726,7 +810,7 @@ bool ota_wifi_coex_thread_parked(void)
 
 int ota_wifi_coex_seconds_left(void)
 {
-    if (!s_coex_active) return 0;
+    if (!s_coex_active || s_coex_persistent) return 0;
     int64_t left = s_coex_deadline_us - esp_timer_get_time();
     return (left > 0) ? (int)(left / 1000000) : 0;
 }

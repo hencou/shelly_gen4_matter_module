@@ -15,5 +15,5 @@
  * On ESP32 the Basic Information cluster itself reports PROJECT_VER /
  * PROJECT_VER_NUMBER from CMakeLists.txt, so these must match that version --
  * the build fails if they don't. */
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 10604
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.6.4"
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 10605
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.6.5"
