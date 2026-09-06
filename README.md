@@ -162,7 +162,12 @@ After flashing (or a factory reset via the web interface) the module comes up in
 A module that is already commissioned skips this and goes straight to Thread.
 Removing the device from its last controller (e.g. deleting it in Home
 Assistant) reboots it into this commissioning mode a few seconds later; WiFi
-credentials and scripts are kept.
+credentials and scripts are kept. If another fabric is still present (typical
+when HA was commissioned from the Android app, which leaves a Google fabric
+next to HA's — see `Fabrics` in `/api/diag`), the module instead opens its
+commissioning window for 15 minutes over the network, so it can be re-added
+with the same QR/pairing code through the Thread border router without
+touching the other fabrics.
 
 ### 3. Configure endpoints via the dashboard
 
