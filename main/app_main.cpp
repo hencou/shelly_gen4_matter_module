@@ -93,20 +93,43 @@ static void on_commissioning_complete(const chip::DeviceLayer::ChipDeviceEvent *
         esp_timer_start_once(s_commissioned_timer, 3 * 1000 * 1000);  /* 3 s */
 }
 
-/* The controller removed the last fabric (e.g. the device was deleted in Home
- * Assistant). The SDK does not reopen the commissioning window on its own, and
- * with CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING the BLE stack was shut down after
- * the first commissioning, so the node would sit unreachable until a manual
- * reset. A reboot puts it back into the uncommissioned boot path (BLE
- * advertising, slow-blinking LED). Delayed so the RemoveFabric response and
- * its ack still go out over the closing session. */
+/* A controller removed one of our fabrics (e.g. the device was deleted in Home
+ * Assistant). The SDK does not reopen the commissioning window on its own, so
+ * the node could only be re-added with physical access.
+ *
+ * Other fabrics left (typical: HA on Android commissions through Google Play
+ * Services, which keeps a Google fabric next to HA's): open the basic
+ * commissioning window for the maximum 15 min. BLE is gone since the first
+ * commissioning (CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING) and cannot come back
+ * without a reboot, so this is on-network only: _matterc._udp goes out over
+ * SRP and the border router's advertising proxy, exactly like multi-admin
+ * sharing. The remaining fabrics stay untouched.
+ *
+ * Last fabric gone: reboot into the uncommissioned boot path (BLE advertising,
+ * slow-blinking LED). Delayed so the RemoveFabric response and its ack still
+ * go out over the closing session. */
 static esp_timer_handle_t s_last_fabric_timer = NULL;
 
 static void on_fabric_removed(const chip::DeviceLayer::ChipDeviceEvent *event,
                               intptr_t /*arg*/)
 {
     if (event->Type != chip::DeviceLayer::DeviceEventType::kFabricRemoved) return;
-    if (chip::Server::GetInstance().GetFabricTable().FabricCount() > 0) return;
+
+    auto &server = chip::Server::GetInstance();
+    if (server.GetFabricTable().FabricCount() > 0) {
+        auto &cwm = server.GetCommissioningWindowManager();
+        if (cwm.IsCommissioningWindowOpen()) return;
+        CHIP_ERROR err = cwm.OpenBasicCommissioningWindow(cwm.MaxCommissioningTimeout());
+        if (err == CHIP_NO_ERROR) {
+            ESP_LOGW(TAG, "fabric removed, %u left — commissioning window open for %lu s (on-network)",
+                     (unsigned) server.GetFabricTable().FabricCount(),
+                     (unsigned long) cwm.MaxCommissioningTimeout().count());
+        } else {
+            ESP_LOGE(TAG, "fabric removed, but commissioning window not opened: %" CHIP_ERROR_FORMAT,
+                     err.Format());
+        }
+        return;
+    }
     if (s_last_fabric_timer) return;
 
     ESP_LOGW(TAG, "last fabric removed — rebooting into commissioning mode in 3 s");
