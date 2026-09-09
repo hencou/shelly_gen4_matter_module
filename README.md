@@ -162,10 +162,7 @@ for this firmware, so enabling it now covers both.
 After flashing (or a factory reset via the web interface) the module comes up in
 **BLE commissioning mode** straight away — no WiFi, no setup step first:
 
-1. Open Home Assistant → Settings → Devices & Services → Matter → "Add device"
-   (prefer the HA web UI with the pairing code over the Android companion app:
-   the app commissions through Google Play Services and leaves an extra Google
-   fabric on the module, see below)
+1. Open Home Assistant companion App → Settings → Devices & Services → Matter → "Add device"
 2. Enter setup code: **34970112332** (default, configurable in `sdkconfig.defaults`)
 3. HA Matter Server pairs via BLE and provisions Thread credentials
 4. After ~30-60s the device appears in HA
