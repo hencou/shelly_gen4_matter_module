@@ -151,10 +151,21 @@ After either first install, **all** further updates are over the air (Matter OTA
 
 ### 2. Factory reset → commissioning mode
 
+**Home Assistant prerequisite (once):** this firmware uses the Matter test
+vendor ID (0xFFF1) and a test Device Attestation Certificate, so the Matter
+Server has to accept test-net devices. In Settings → Add-ons → **Matter
+Server** → Configuration turn on **"Enable test-net DCL usage"** and restart
+the add-on. Without it commissioning fails at the attestation step. The same
+switch is what later lets Home Assistant offer [Matter OTA updates](#1-matter-ota-over-thread)
+for this firmware, so enabling it now covers both.
+
 After flashing (or a factory reset via the web interface) the module comes up in
 **BLE commissioning mode** straight away — no WiFi, no setup step first:
 
 1. Open Home Assistant → Settings → Devices & Services → Matter → "Add device"
+   (prefer the HA web UI with the pairing code over the Android companion app:
+   the app commissions through Google Play Services and leaves an extra Google
+   fabric on the module, see below)
 2. Enter setup code: **34970112332** (default, configurable in `sdkconfig.defaults`)
 3. HA Matter Server pairs via BLE and provisions Thread credentials
 4. After ~30-60s the device appears in HA
@@ -321,7 +332,9 @@ https://github.com/hencou/shelly_gen4_matter_module/releases
 idf.py build
 python3 tools/make-matter-ota.py      # → shelly-gen4-matter-module-v<version>.ota
 ```
-- And serve it from a Matter OTA provider (e.g. Home Assistant):
+- And serve it from a Matter OTA provider (e.g. Home Assistant; requires
+  "Enable test-net DCL usage" in the Matter Server add-on, see
+  [commissioning](#2-factory-reset--commissioning-mode)):
 
 The image embeds the vendor/product ID and software version; the device only accepts an image with a higher software version than it currently runs.
 
@@ -548,7 +561,7 @@ shelly_gen4_matter_module/
 ## Known limitations
 
 - **Test vendor ID**: firmware uses vendor ID 0xFFF1. For Google/Apple Home publication a CSA vendor ID is required.
-- **Test DAC**: for production, provision real Device Attestation Certificates in the NVS `chip-factory` namespace. For local HA usage the test DAC works fine.
+- **Test DAC**: for production, provision real Device Attestation Certificates in the NVS `chip-factory` namespace. For local HA usage the test DAC works fine once "Enable test-net DCL usage" is on in the Matter Server add-on.
 
 ## License
 
