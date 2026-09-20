@@ -171,6 +171,14 @@ extern "C" void on_button_event(input_id_t id, button_event_t evt)
         return;
     }
 
+    if (evt == BTN_EVT_FACTORY_RESET_HOLD) {
+        if (id != INPUT_DEVICE_BTN) return;
+        ESP_LOGW(TAG, "PCB button held %d s -> factory reset", FACTORY_RESET_HOLD_MS / 1000);
+        status_led_set(STATUS_LED_FAST_BLINK);
+        ota_factory_reset_and_reboot("pcb button");
+        return;
+    }
+
     /* All button behavior is handled by Lua scripts */
     script_engine_button_event(id, evt);
 }

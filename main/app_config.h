@@ -57,6 +57,10 @@ void bench_mode_init(void);
  * (ota_wifi_coex_start). */
 #define MODE_TOGGLE_CLICKS      6
 #define MODE_TOGGLE_WINDOW_MS   2500
+/* Holding the onboard PCB button (INPUT_DEVICE_BTN only, never the wall-switch
+ * or Add-on inputs) this long triggers a factory reset: same path as the
+ * management page (flag in NVS, reboot, wipe before Matter/Thread start). */
+#define FACTORY_RESET_HOLD_MS   30000
 /* Double-click detection: after a short press release, wait this long
  * for a second press before dispatching SHORT_PRESS. */
 #define DOUBLE_CLICK_WINDOW_MS  400

@@ -328,7 +328,10 @@ Via the management dashboard → **Backup** tab:
 
 ### Factory reset
 
-Via the web management dashboard → **Factory Reset** button. This wipes:
+Via the web management dashboard → **Factory Reset** button, or by holding the
+**onboard PCB button for 30 seconds** (only that button — the wall-switch and
+Add-on inputs never trigger a reset; the status LED starts blinking fast when
+the reset is accepted). Both wipe:
 - All NVS data (WiFi credentials, script configurations, bench mode)
 - All Matter fabrics and commissioning data (NVS namespaces)
 

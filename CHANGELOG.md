@@ -5,6 +5,13 @@ every version are on the [Releases page](https://github.com/hencou/shelly_gen4_m
 The Matter `SoftwareVersion` is bumped with every release so controllers offer
 the update over Matter OTA.
 
+## 1.6.6 — 2026-09-07
+
+- Factory reset by holding the **onboard PCB button for 30 seconds**. Only the
+  PCB button triggers it; the wall-switch (SW/SW2) and Add-on inputs never do.
+  Uses the same safe path as the dashboard button: flag, reboot, wipe NVS
+  before Matter/OpenThread start. The status LED blinks fast once accepted.
+
 ## 1.6.5 — 2026-09-06
 
 - WiFi has three modes on the dashboard: **Off**, **10 minutes** or **Always on**,
