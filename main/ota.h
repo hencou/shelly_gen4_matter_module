@@ -86,6 +86,8 @@ void ota_mark_app_valid(void);
  * OpenThread have any NVS handle open, so nothing writes into a half-erased
  * partition. */
 esp_err_t ota_factory_reset_request(void);
+/* Request + SRP deregister + esp_restart(); does not return on success. */
+void      ota_factory_reset_and_reboot(const char *reason);
 void      ota_factory_reset_at_boot(void);
 
 /* SRP Server mode: enable Thread DNS-SD service discovery without full TBR.

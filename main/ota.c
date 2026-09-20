@@ -394,6 +394,21 @@ esp_err_t ota_factory_reset_request(void)
     return err;
 }
 
+void ota_factory_reset_and_reboot(const char *reason)
+{
+    esp_err_t err = ota_factory_reset_request();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "factory reset (%s): cannot set flag: %s", reason, esp_err_to_name(err));
+        return;
+    }
+    ESP_LOGW(TAG, "Factory reset (%s): nvs is wiped at the next boot", reason);
+    /* Hand the SRP name back first: the wipe takes the client key with it, and
+     * the server would otherwise refuse the same host name under the new key. */
+    matter_srp_deregister(3000);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_restart();
+}
+
 void ota_factory_reset_at_boot(void)
 {
     nvs_handle_t h;

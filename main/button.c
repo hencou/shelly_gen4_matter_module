@@ -72,6 +72,7 @@ typedef struct {
     bool    pressed;
     int64_t press_start_us;
     bool    long_fired;
+    bool    reset_fired;        /* FACTORY_RESET_HOLD already sent for this hold */
     int64_t click_hist[CLICK_HISTORY];
     uint8_t click_idx;
     /* double-click / short-long detection */
@@ -125,6 +126,7 @@ static void handle_edge(btn_isr_msg_t *m)
         s->pressed        = true;
         s->press_start_us = m->t_us;
         s->long_fired     = false;
+        s->reset_fired    = false;
         /* If there are pending clicks (recent short press), this press
          * could become a short-long combo (tap + hold). */
         s->in_combo_long  = (s->pending_clicks > 0);
@@ -193,8 +195,14 @@ static void check_long_press(int64_t now_us)
 {
     for (int i = 0; i < INPUT_COUNT; i++) {
         btn_state_t *s = &s_state[i];
-        if (!s->enabled || !s->pressed || s->long_fired) continue;
+        if (!s->enabled || !s->pressed) continue;
         int64_t dur_ms = (now_us - s->press_start_us) / 1000;
+        if (i == INPUT_DEVICE_BTN && !s->reset_fired &&
+            dur_ms >= FACTORY_RESET_HOLD_MS) {
+            s->reset_fired = true;
+            if (s_cb) s_cb((input_id_t)i, BTN_EVT_FACTORY_RESET_HOLD);
+        }
+        if (s->long_fired) continue;
         if (dur_ms >= LONG_PRESS_MS) {
             s->long_fired = true;
             if (s->in_combo_long) {

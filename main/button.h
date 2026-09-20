@@ -25,6 +25,9 @@ extern "C" {
  * - SHORT_LONG_START fires when a short press is followed by a long hold
  *                    Used for continuous color temperature adjustment.
  * - SHORT_LONG_STOP  fires on release after a SHORT_LONG_START
+ * - FACTORY_RESET_HOLD fires once when INPUT_DEVICE_BTN (the onboard PCB button)
+ *                    has been held for FACTORY_RESET_HOLD_MS (30 s). Never
+ *                    emitted for the wall-switch or Add-on inputs.
  */
 typedef enum {
     BTN_EVT_SHORT_PRESS = 0,
@@ -36,6 +39,7 @@ typedef enum {
     BTN_EVT_DOUBLE_PRESS,
     BTN_EVT_SHORT_LONG_START,
     BTN_EVT_SHORT_LONG_STOP,
+    BTN_EVT_FACTORY_RESET_HOLD,
 } button_event_t;
 
 typedef void (*button_cb_t)(input_id_t input, button_event_t evt);
