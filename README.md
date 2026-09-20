@@ -1,6 +1,47 @@
-# shelly_gen4_matter_module
+# Shelly Gen4 Matter Module — open-source Matter over Thread firmware for Shelly 1 Gen4, 1 Mini Gen4, 1PM Gen4 and 2PM Gen4
 
-**Custom Matter-over-Thread firmware** for the **Shelly Gen4** line (ESP32-C6) — one image for the Shelly 1, 1PM and 2PM Gen4 — with **Lua scripting** for fully configurable endpoints.
+[![Latest release](https://img.shields.io/github/v/release/hencou/shelly_gen4_matter_module?label=release)](https://github.com/hencou/shelly_gen4_matter_module/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Matter 1.6](https://img.shields.io/badge/Matter-1.6-blue)
+![Thread](https://img.shields.io/badge/Thread-OpenThread-green)
+![ESP32-C6](https://img.shields.io/badge/ESP32--C6-ESP--IDF%205.5-orange)
+
+Replacement firmware that turns a **Shelly 1 Gen4**, **Shelly 1 Mini Gen4**,
+**Shelly 1PM Gen4** or **Shelly 2PM Gen4** (all ESP32-C6) into a native
+**Matter over Thread** device: no Shelly app, no cloud account, no WiFi
+required. Works with **Home Assistant**, **Apple Home**, **Google Home** and any
+other Matter 1.6 controller with a Thread border router.
+
+**One firmware image for all four models** — pick the model on the built-in
+management page, no separate downloads.
+
+**Highlights**
+
+- **Matter over Thread, BLE commissioning** — behaves like an off-the-shelf
+  Matter device: scan the code, done. Thread is the only network it needs.
+- **Install from the stock Shelly web UI** — no UART, no opening the device.
+  Return to the official Shelly firmware from the same page.
+- **Configurable Matter endpoints without reflashing** — light switch (on/off,
+  dim, colour temperature via Matter bindings), relay, temperature, occupancy,
+  contact and electrical power measurement endpoints, up to 8 per module,
+  chosen at runtime.
+- **Lua 5.4 scripting** — per-endpoint button/relay/sensor logic, editable in
+  the browser, stored on the module.
+- **Power metering** — BL0942 (1PM) and dual-channel ADE7953 (2PM) exposed as
+  Matter Electrical Power Measurement endpoints.
+- **Shelly Plus Add-on support** — DS18B20 temperature, digital input and
+  analog (0–10 V) input.
+- **Matter bindings, unicast and group (multicast)** — control lights directly
+  from the wall switch, controller-independent.
+- **Management dashboard reachable over Thread** (IPv6) — scripts, hardware,
+  diagnostics, log, backup/restore. WiFi can be switched on for 10 minutes or
+  permanently next to Thread when you prefer it.
+- **Updates** — Matter OTA (e.g. from Home Assistant), `.bin` upload on the
+  dashboard, or the Shelly-style `.zip` package; A/B partitions with rollback.
+- **Fabric recovery** — removing the device from one controller reopens the
+  commissioning window; removing the last one reboots into commissioning.
+
+Version history: see [CHANGELOG.md](CHANGELOG.md).
 
 ## Disclaimer
 
@@ -16,26 +57,21 @@
 >
 > This project is not affiliated with Shelly or Espressif Systems.
 
-## Features
-
-- **Dynamic Matter endpoints** — no hard-coded endpoints. Configure via the web management dashboard
-- **Lua 5.4 scripting** — write custom button/relay/sensor logic per endpoint slot (up to 8 slots)
-- **Matter 1.6** compatible — works with Home Assistant, Google Home, Apple Home
-- **Thread + WiFi** — Thread for Matter communication, WiFi for management/OTA
-- **WiFi management dashboard** — configure scripts, WiFi, endpoints, backup/restore
-- **Over-the-air updates** — Matter OTA over Thread and `.bin` upload via the dashboard (standard ESP-IDF OTA with rollback). Can be installed straight from the stock Shelly web UI (no UART, no opening the device); UART is only needed to make a full backup or for a guaranteed return to stock. See [Firmware updates](#firmware-updates).
-
 ## Endpoint types
 
-Each script slot can be configured as one of these Matter endpoint types:
+Each of the 8 script slots can be configured as one of these Matter endpoint
+types from the management dashboard, without reflashing or re-commissioning:
 
 | Type | Matter device | Description |
 |---|---|---|
 | **OnOff Toggle + Dim + Color** | 0x0103 Light Switch (client) | Toggle, dim, color temp via bindings |
 | **OnOff State-follow** | 0x0103 Light Switch (client) | On/Off follows switch position |
-| **Temperature Sensor** | 0x0302 Temp. Sensor (server) | DS18B20 via 1-Wire |
-| **Occupancy Sensor** | 0x0107 Occupancy Sensor (server) | Analog IN duty cycle |
 | **Relay (OnOff Light)** | 0x0100 OnOff Light (server) | Physical relay (GPIO from the active hardware profile; 2 relays on the 2PM) |
+| **Temperature Sensor** | 0x0302 Temp. Sensor (server) | DS18B20 via 1-Wire, or any value set from Lua |
+| **Occupancy Sensor** | 0x0107 Occupancy Sensor (server) | Analog IN duty cycle, or set from Lua |
+| **Illuminance Sensor** | 0x0106 Light Sensor (server) | Lux value set from Lua |
+| **Contact Sensor** | 0x0015 Contact Sensor (server) | Boolean state set from Lua |
+| **Electrical Power Measurement** | 0x0510 Electrical Sensor (server) | Voltage/current/power/energy from the BL0942 (1PM) or ADE7953 (2PM), or set from Lua |
 
 ## Based on
 
@@ -81,10 +117,8 @@ pull-up), and the wall-switch inputs **active-high** in normal operation (see
 > ⚠️ **ADE7953 I2C pins are the one unverified value.** Stock reads the I2C
 > SDA/SCL pins from the device configuration in NVS instead of hardcoding them.
 > Only the ADE7953 IRQ (GPIO19) is confirmed. The 2PM relay/switch pins themselves
->  *are* confirmed: the ESPHome device DB
-> (https://devices.esphome.io/devices/shelly-plus-2pm-gen-4/) contradicts itself
-> on GPIO5/GPIO3/GPIO11/GPIO10, and stock agrees with its YAML config (relays on
-> GPIO5/GPIO3, switches on GPIO11/GPIO10).
+> *are* confirmed against the stock firmware (relays on GPIO5/GPIO3, switches on
+> GPIO11/GPIO10).
 
 Notes:
 - **Changing the device type does not require Matter re-commissioning** — the
