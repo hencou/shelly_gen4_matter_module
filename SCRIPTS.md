@@ -233,9 +233,11 @@ A sensor with a plain digital presence output (LD2410S OUT pin, PIR) can go on
 the Digital IN instead and use `input.digital()` — see the contact sensor
 example below.
 
-> ⚠️ The Add-on sensor supply is limited to **10 mA**. The low-power LD2410**S**
-> stays under that; the regular LD2410/LD2410C (≈80 mA) needs its own supply,
-> with only OUT and GND connected to the Add-on.
+> ⚠️ The Add-on sensor supply is limited to **10 mA**. Use the low-power
+> LD2410**S** variant; the regular LD2410/LD2410B/LD2410C draw far more and
+> cannot be powered from the Add-on. The Digital IN has a built-in pull-up and
+> reads *true* when pulled to GND, so an active-high OUT pin reads inverted —
+> invert it in Lua (`not input.digital()`) or use the sensor's active-low option.
 
 | Setting | Value |
 |---|---|

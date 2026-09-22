@@ -142,6 +142,7 @@ Notes:
 | Shelly Plus Add-on | DS18B20 (TX=GPIO9/RX=GPIO16) + Digital IN (GPIO18 on the 1 Gen4) + Analog IN (GPIO17) |
 | Thread Border Router | Google TV Streamer 4K (or any Thread BR) |
 | Matter controller | Home Assistant Matter Server, Google Home, Apple Home |
+| Commissioning | HA Matter Server UI or `chip-tool` |
 
 ### Shelly Plus Add-on
 
@@ -160,20 +161,26 @@ supply, and the sensor logic (e.g. "presence → light on, no presence for 5 min
 | **DS18B20** (1-Wire) | Temperature probe, up to 1 sensor on the bus | Temperature Sensor | `input.temperature()` |
 
 > ⚠️ **Power budget: the Add-on's sensor supply delivers at most 10 mA.** Only
-> connect sensors that stay below that on the Add-on's own 3.3 V/5 V pins:
-> a TTP223 (a few µA), a DS18B20 (≈1 mA while converting), a reed contact or
-> a low-power radar such as the HLK-LD2410**S** are fine. Higher-power modules
-> (the regular HLK-LD2410/LD2410C at ≈80 mA, most PIR boards with a relay
-> output, sensors with an onboard LED strip) need their own supply; then
-> connect only the sensor's OUT and GND to the Add-on input and check that the
-> output level fits the input (Digital IN: < 0.5 V = active, > 2.5 V = idle;
-> Analog IN: 0–10 V). Exceeding 10 mA browns out the Add-on and the readings
-> become unreliable.
+> connect sensors that stay below that: a TTP223 (a few µA), a DS18B20 (≈1 mA
+> while converting), a reed contact or the **HLK-LD2410S** are fine. The
+> LD2410S is the special low-power variant and the one to buy for this — the
+> regular HLK-LD2410/LD2410B/LD2410C draw far more than 10 mA and **cannot be
+> powered from the Add-on**. Anything that needs more than 10 mA (mmWave radars
+> other than the S variant, PIR boards with a relay output, modules with
+> indicator LEDs) must not be connected to the Add-on supply at all.
+>
+> **Digital IN has a built-in pull-up**: the input idles high and reads *true*
+> when the sensor pulls it to GND (< 0.5 V; > 2.5 V = idle). The sensor's output
+> must therefore be able to sink the pin — open-drain/open-collector, a switch
+> or reed contact to GND, or a push-pull output that swings between GND and its
+> supply. An output that is idle-high and goes high on detection (TTP223 in its
+> default active-high mode, the LD2410S OUT pin) works, but reads inverted:
+> either select the active-low option of the sensor (TTP223 `AHLB` pad) or
+> invert the value in your Lua script.
 
 The wiring and polarity of each Add-on GPIO are listed under
 [Pin mapping](#pin-mapping); example scripts for a touch pad, a presence
 sensor and a temperature probe are in [SCRIPTS.md](SCRIPTS.md).
-| Commissioning | HA Matter Server UI or `chip-tool` |
 
 ## Setup procedure
 
