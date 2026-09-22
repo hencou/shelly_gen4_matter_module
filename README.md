@@ -29,8 +29,10 @@ management page, no separate downloads.
   the browser, stored on the module.
 - **Power metering** — BL0942 (1PM) and dual-channel ADE7953 (2PM) exposed as
   Matter Electrical Power Measurement endpoints.
-- **Shelly Plus Add-on support** — DS18B20 temperature, digital input and
-  analog (0–10 V) input.
+- **Shelly Plus Add-on support** — turn a relay module into a multi-sensor:
+  DS18B20 temperature, a touch sensor (TTP223) or presence radar (HLK-LD2410S)
+  on the digital input, and a 0–10 V analog input, each as its own Matter
+  endpoint. See [Shelly Plus Add-on](#shelly-plus-add-on).
 - **Matter bindings, unicast and group (multicast)** — control lights directly
   from the wall switch, controller-independent.
 - **Management dashboard reachable over Thread** (IPv6) — scripts, hardware,
@@ -141,6 +143,44 @@ Notes:
 | Thread Border Router | Google TV Streamer 4K (or any Thread BR) |
 | Matter controller | Home Assistant Matter Server, Google Home, Apple Home |
 | Commissioning | HA Matter Server UI or `chip-tool` |
+
+### Shelly Plus Add-on
+
+The official **Shelly Plus Add-on** clips onto the 1 Gen4, 1PM Gen4 and 2PM
+Gen4 (not the Mini) and gives the module galvanically isolated low-voltage
+inputs behind the mains-side relay. With this firmware every Add-on input can
+be wired to its own Matter endpoint from a Lua script, so one module in a wall
+box becomes a relay **plus** a sensor — no extra Thread device, no extra power
+supply, and the sensor logic (e.g. "presence → light on, no presence for 5 min
+→ light off") runs locally on the module, even when the controller is down.
+
+| Add-on terminal | Typical sensor | Matter endpoint | Lua |
+|---|---|---|---|
+| **Digital IN** | TTP223 capacitive touch pad (a touch surface instead of a wall switch), reed/door contact, PIR or radar with a digital OUT such as the **HLK-LD2410S** | Contact Sensor, Occupancy Sensor, or a button that toggles/controls a bound light | `input.digital()`, `contact_closed`/`contact_open` and all button events with `input.button_id() == 1` |
+| **Analog IN** (0–10 V) | Presence sensors with an analog/PWM output, light-dependent resistors, 0–10 V process signals | Occupancy Sensor, Illuminance Sensor | `input.analog()` |
+| **DS18B20** (1-Wire) | Temperature probe, up to 1 sensor on the bus | Temperature Sensor | `input.temperature()` |
+
+> ⚠️ **Power budget: the Add-on's sensor supply delivers at most 10 mA.** Only
+> connect sensors that stay below that: a TTP223 (a few µA), a DS18B20 (≈1 mA
+> while converting), a reed contact or the **HLK-LD2410S** are fine. The
+> LD2410S is the special low-power variant and the one to buy for this — the
+> regular HLK-LD2410/LD2410B/LD2410C draw far more than 10 mA and **cannot be
+> powered from the Add-on**. Anything that needs more than 10 mA (mmWave radars
+> other than the S variant, PIR boards with a relay output, modules with
+> indicator LEDs) must not be connected to the Add-on supply at all.
+>
+> **Digital IN has a built-in pull-up**: the input idles high and reads *true*
+> when the sensor pulls it to GND (< 0.5 V; > 2.5 V = idle). The sensor's output
+> must therefore be able to sink the pin — open-drain/open-collector, a switch
+> or reed contact to GND, or a push-pull output that swings between GND and its
+> supply. An output that is idle-high and goes high on detection (TTP223 in its
+> default active-high mode, the LD2410S OUT pin) works, but reads inverted:
+> either select the active-low option of the sensor (TTP223 `AHLB` pad) or
+> invert the value in your Lua script.
+
+The wiring and polarity of each Add-on GPIO are listed under
+[Pin mapping](#pin-mapping); example scripts for a touch pad, a presence
+sensor and a temperature probe are in [SCRIPTS.md](SCRIPTS.md).
 
 ## Setup procedure
 
