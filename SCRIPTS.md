@@ -229,6 +229,13 @@ end
 
 Reads the analog input duty cycle (0–100 %) and reports occupancy state.
 Useful with the HLK-LD2410S mmWave sensor connected to the Shelly Plus Add-on.
+A sensor with a plain digital presence output (LD2410S OUT pin, PIR) can go on
+the Digital IN instead and use `input.digital()` — see the contact sensor
+example below.
+
+> ⚠️ The Add-on sensor supply is limited to **10 mA**. The low-power LD2410**S**
+> stays under that; the regular LD2410/LD2410C (≈80 mA) needs its own supply,
+> with only OUT and GND connected to the Add-on.
 
 | Setting | Value |
 |---|---|
@@ -357,6 +364,9 @@ end
 ## 8. Multi-input script (different behavior per button)
 
 Use `input.button_id()` to distinguish which physical input triggered the event.
+This is also how a **TTP223 touch pad on the Add-on Digital IN** (`id == 1`)
+becomes a second light switch: it gets the same short/long/double-press events
+as the wall switch, so a touch surface can toggle or dim a bound light.
 
 GPIOs are model-dependent (taken from the active hardware profile); the values below are the Shelly 1 Gen4 defaults.
 
