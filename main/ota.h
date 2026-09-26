@@ -61,8 +61,9 @@ typedef enum {
 
 esp_err_t       ota_wifi_mode_set(ota_wifi_mode_t mode);
 ota_wifi_mode_t ota_wifi_mode_get(void);
-/* Start WiFi at boot when "always on" is stored. Call once Thread is up. */
-void            ota_wifi_mode_boot(void);
+/* Start WiFi at boot when "always on" is stored. Call once Thread is attached
+ * (or given up on). Returns true when WiFi was started. */
+bool            ota_wifi_mode_boot(void);
 
 /* True while the SoftAP fallback keeps Thread down on purpose, so a detached
  * Thread is expected and must not be treated as a fault. */
