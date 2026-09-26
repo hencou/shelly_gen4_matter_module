@@ -1161,11 +1161,9 @@ extern "C" void matter_update_relay_onoff(int ch, bool on)
 #define TWDG_PERIOD_US   (30ULL * 1000 * 1000)   /* check every 30 s */
 #define TWDG_SOFT_TICKS  4                        /* ~2 min detached → toggle */
 #define TWDG_HARD_TICKS  10                       /* ~5 min detached → reboot */
-#define TWDG_WIFI_SOFT_TICKS 8                    /* ~4 min detached with WiFi on → toggle */
 
 static esp_timer_handle_t s_twdg_timer = nullptr;
 static int                s_twdg_detached_ticks = 0;
-static int                s_twdg_wifi_ticks = 0;
 
 static void thread_watchdog_toggle(void)
 {
@@ -1186,10 +1184,9 @@ static void thread_watchdog_cb(void *)
         return;
     }
     if (conn.IsThreadAttached()) {
-        if (s_twdg_detached_ticks || s_twdg_wifi_ticks)
+        if (s_twdg_detached_ticks)
             ESP_LOGI(TAG, "Thread re-attached — watchdog reset");
         s_twdg_detached_ticks = 0;
-        s_twdg_wifi_ticks = 0;
         return;
     }
 
@@ -1197,32 +1194,21 @@ static void thread_watchdog_cb(void *)
      * airtime; that is not a fault and the window restores it itself. */
     if (ota_wifi_coex_thread_parked()) {
         s_twdg_detached_ticks = 0;
-        s_twdg_wifi_ticks = 0;
         return;
     }
 
     /* A detached node while WiFi is on is not necessarily a fault: giving up
      * the router role and rx-on-when-idle makes the node re-attach as a sleepy
-     * child, and on a shared radio that takes longer than one tick. A reboot
-     * would kill the WiFi window the user asked for, so only the gentle
-     * recovery runs here, on a slower cadence: once OpenThread has given up
-     * its own attach attempts (long back-off) a fresh interface toggle is the
-     * only thing that gets a node in WiFi "Always on" back onto the mesh. */
+     * child, and on a shared radio that takes longer than one tick. Toggling
+     * the interface under an active coex session only adds MLE traffic to the
+     * radio both stacks fight over, and a reboot would kill the WiFi window
+     * the user asked for — so the watchdog just waits for WiFi to go off. */
     if (ota_wifi_coex_active()) {
         s_twdg_detached_ticks = 0;
-        s_twdg_wifi_ticks++;
-        if (s_twdg_wifi_ticks % TWDG_WIFI_SOFT_TICKS == 0) {
-            ESP_LOGW(TAG, "Thread detached ~%d s while WiFi is on — toggling "
-                          "interface to force re-attach (no reboot)",
-                     (int)(s_twdg_wifi_ticks * 30));
-            thread_watchdog_toggle();
-        } else {
-            ESP_LOGI(TAG, "Thread detached while WiFi is on — watchdog tick %d",
-                     s_twdg_wifi_ticks);
-        }
+        ESP_LOGI(TAG, "Thread detached while WiFi is on — watchdog waits "
+                      "for WiFi to go off");
         return;
     }
-    s_twdg_wifi_ticks = 0;
 
     s_twdg_detached_ticks++;
     ESP_LOGW(TAG, "Thread detached — watchdog tick %d", s_twdg_detached_ticks);

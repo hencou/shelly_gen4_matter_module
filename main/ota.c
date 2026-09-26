@@ -833,12 +833,13 @@ ota_wifi_mode_t ota_wifi_mode_get(void)
     return OTA_WIFI_OFF;
 }
 
-void ota_wifi_mode_boot(void)
+bool ota_wifi_mode_boot(void)
 {
-    if (!wifi_always_load()) return;
+    if (!wifi_always_load()) return false;
     ESP_LOGW(TAG, "wifi_coex: 'always on' stored — starting WiFi next to Thread");
     s_coex_persistent = true;
     wifi_coex_launch();
+    return true;
 }
 
 bool ota_wifi_coex_active(void)

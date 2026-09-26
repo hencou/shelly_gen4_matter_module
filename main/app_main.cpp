@@ -144,21 +144,52 @@ static void on_fabric_removed(const chip::DeviceLayer::ChipDeviceEvent *event,
         esp_timer_start_once(s_last_fabric_timer, 3 * 1000 * 1000);  /* 3 s */
 }
 
-/* "Always on" WiFi from NVS, once Thread has had a moment to attach so the
- * sleepy-mode switch lands on an attached node. */
+/* "Always on" WiFi from NVS. Thread gets the radio to itself first: WiFi is
+ * started only once the node is attached (so the sleepy-mode switch lands on
+ * an attached node and the initial attach is not disturbed by WiFi traffic),
+ * or after a cap when no Thread network can be found, so WiFi never stays off
+ * forever. An unprovisioned node has nothing to attach to and starts at once. */
+#define WIFI_BOOT_POLL_US   (5ULL * 1000 * 1000)     /* attach check every 5 s */
+#define WIFI_BOOT_MIN_TICKS 3                         /* never before ~15 s after boot */
+#define WIFI_BOOT_MAX_TICKS 36                        /* give up waiting after ~3 min */
+
 static esp_timer_handle_t s_wifi_boot_timer = NULL;
+static int                s_wifi_boot_ticks = 0;
+
+static void wifi_boot_cb(void *)
+{
+    auto &conn = chip::DeviceLayer::ConnectivityMgr();
+    bool provisioned = conn.IsThreadProvisioned() && conn.IsThreadEnabled();
+    bool attached    = provisioned && conn.IsThreadAttached();
+    s_wifi_boot_ticks++;
+
+    if (provisioned && s_wifi_boot_ticks < WIFI_BOOT_MIN_TICKS)
+        return;   /* let a fresh attach settle (SRP, routes) before WiFi joins */
+    if (provisioned && !attached && s_wifi_boot_ticks < WIFI_BOOT_MAX_TICKS)
+        return;   /* keep waiting for Thread */
+
+    esp_timer_stop(s_wifi_boot_timer);
+    if (!ota_wifi_mode_boot())
+        return;   /* WiFi not "always on" — nothing was started */
+    if (attached)
+        ESP_LOGI(TAG, "Thread attached after ~%d s — WiFi 'always on' started",
+                 s_wifi_boot_ticks * 5);
+    else if (provisioned)
+        ESP_LOGW(TAG, "Thread not attached after ~%d s — WiFi 'always on' started anyway",
+                 s_wifi_boot_ticks * 5);
+}
 
 static void schedule_wifi_mode_boot(void)
 {
     const esp_timer_create_args_t args = {
-        .callback = [](void *) { ota_wifi_mode_boot(); },
+        .callback = wifi_boot_cb,
         .arg = nullptr,
         .dispatch_method = ESP_TIMER_TASK,
         .name = "wifi_boot",
         .skip_unhandled_events = true,
     };
     if (esp_timer_create(&args, &s_wifi_boot_timer) == ESP_OK)
-        esp_timer_start_once(s_wifi_boot_timer, 15 * 1000 * 1000);  /* 15 s */
+        esp_timer_start_periodic(s_wifi_boot_timer, WIFI_BOOT_POLL_US);
 }
 
 extern "C" void on_button_event(input_id_t id, button_event_t evt)
