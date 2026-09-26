@@ -15,6 +15,7 @@ Copy-paste these into the **Scripts** tab of the management dashboard.
 - [8. Multi-input script (different behavior per button)](#8-multi-input-script-different-behavior-per-button)
 - [9. Relay toggle on short press](#9-relay-toggle-on-short-press)
 - [10. LDR light-dependent lamp control](#10-ldr-light-dependent-lamp-control)
+- [11. Mode cycle on the SW input: on → off → LDR control](#11-mode-cycle-on-the-sw-input-on--off--ldr-control)
 
 ---
 
@@ -491,6 +492,158 @@ end
 ```
 
 ---
+
+## 11. Mode cycle on the SW input: on → off → LDR control
+
+A wall switch on **SW** steps through three modes; every change of the switch
+position (either direction) advances to the next mode:
+
+| Mode | Relay (e.g. fluorescent tube) | Bound lamp |
+|---|---|---|
+| ON | on | on |
+| OFF | off | off |
+| LDR | automatic, from the analog IN light sensor | automatic level, off when bright |
+
+| Setting | Value |
+|---|---|
+| Endpoint Type | OnOff Toggle + Dim + Color (client) |
+| Trigger | Periodic |
+| Period | 500 (poll SW every 0.5 s; the LDR control runs every 10th run = 5 s) |
+
+A script slot has one trigger, so the switch is polled with `input.sw()` from
+the periodic run instead of using a button-event trigger. The first run only
+records the current switch position; the script starts in LDR mode. Only SW is
+watched — the Add-on Digital IN, the PCB button and SW2 do not affect the mode.
+
+```lua
+-- Trigger: Periodic, 500 ms.
+-- Elke standwissel van SW schakelt de regeling door:
+--   0 = AAN   (TL-relais + lamp aan)
+--   1 = UIT   (TL-relais + lamp uit)
+--   2 = LDR   (automatische lichtregeling, elke 5 s)
+-- en daarna weer 0 = AAN enzovoort.
+
+local LDR_PERIOD_RUNS = 10       -- 10 x 500 ms = 5 s
+
+local tl_lower_level_off   = 55
+local tl_lower_level_on    = 60
+local bulb_upper_level_on  = 65
+local bulb_upper_level_off = 70
+local tl_upper_level_on    = 100
+local tl_upper_level_off   = 101
+
+local last_level   = -1
+local tl_state     = false
+local bulb_state   = false
+local sun_override = false
+
+local mode    = 2                -- start in LDR-regeling
+local last_sw = nil
+local runs    = 0
+
+local function ldr_reset()
+  last_level   = -1
+  sun_override = false
+end
+
+local function set_all(on)
+  output.relay_set(on)
+  tl_state = on
+  if on then
+    endpoint.command("on")
+  else
+    endpoint.command("off")
+  end
+  bulb_state = on
+  last_level = -1
+end
+
+local function ldr_run()
+  local duty = 100 - input.analog()
+  log("duty=" .. duty .. "%")
+
+  if not sun_override and duty >= tl_upper_level_off then
+    sun_override = true
+  elseif sun_override and duty <= tl_upper_level_on then
+    sun_override = false
+  end
+
+  if sun_override then
+    if tl_state then
+      output.relay_set(false)
+      tl_state = false
+      log("duty=" .. duty .. "% -> TL OFF (zon)")
+    end
+    if bulb_state then
+      endpoint.command("off")
+      bulb_state = false
+      last_level = -1
+      log("duty=" .. duty .. "% -> bulb OFF (zon)")
+    end
+    return
+  end
+
+  if (not tl_state) and duty >= tl_lower_level_on then
+    output.relay_set(true)
+    tl_state = true
+    log("duty=" .. duty .. "% -> TL ON")
+  elseif tl_state and duty <= tl_lower_level_off then
+    output.relay_set(false)
+    tl_state = false
+    log("duty=" .. duty .. "% -> TL OFF")
+  end
+
+  if bulb_state and duty >= bulb_upper_level_off then
+    endpoint.command("off")
+    bulb_state = false
+    last_level = -1
+    log("duty=" .. duty .. "% -> bulb OFF")
+  elseif (not bulb_state) and duty <= bulb_upper_level_on then
+    bulb_state = true
+  end
+
+  if bulb_state then
+    endpoint.command("on")
+    -- map 0..bulb_upper_level_off -> level 1..254
+    local level = math.floor(duty * 253 / bulb_upper_level_off) + 1
+    if level > 254 then level = 254 end
+    if level ~= last_level then
+      endpoint.command("move_to_level", {level=level, transition=10})
+      last_level = level
+      log("duty=" .. duty .. "% -> bulb level " .. level)
+    end
+  end
+end
+
+function run()
+  local sw = input.sw()
+  if last_sw == nil then
+    last_sw = sw                 -- eerste run: alleen stand onthouden
+  elseif sw ~= last_sw then
+    last_sw = sw
+    mode = (mode + 1) % 3
+    if mode == 0 then
+      set_all(true)
+      log("SW -> mode AAN")
+    elseif mode == 1 then
+      set_all(false)
+      log("SW -> mode UIT")
+    else
+      ldr_reset()
+      runs = LDR_PERIOD_RUNS     -- direct regelen
+      log("SW -> mode LDR")
+    end
+  end
+
+  if mode == 2 then
+    runs = runs + 1
+    if runs >= LDR_PERIOD_RUNS then
+      runs = 0
+      ldr_run()
+    end
+  end
+end
+```
 
 ## Button events reference
 

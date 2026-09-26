@@ -11,6 +11,14 @@ the update over Matter OTA.
   PCB button triggers it; the wall-switch (SW/SW2) and Add-on inputs never do.
   Uses the same safe path as the dashboard button: flag, reboot, wipe NVS
   before Matter/OpenThread start. The status LED blinks fast once accepted.
+- The Thread watchdog also recovers a detached node while WiFi is on
+  (**Always on** or the 10-minute window): after ~4 minutes detached it toggles
+  the Thread interface to force a fresh attach, repeating every 4 minutes,
+  without ever rebooting while WiFi is on. Previously it waited indefinitely
+  for WiFi to go off, leaving group bindings without a TBR dead until a reboot.
+- Lua scripts may be up to 3999 bytes (was 2047); the management HTTP server
+  stack grew accordingly.
+- SCRIPTS.md example 11: SW-input mode cycle on → off → LDR light control.
 
 ## 1.6.5 — 2026-09-06
 

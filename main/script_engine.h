@@ -21,7 +21,7 @@ extern "C" {
  */
 
 #define SCRIPT_MAX_SLOTS    8
-#define SCRIPT_MAX_SIZE     2048   /* max bytes per script */
+#define SCRIPT_MAX_SIZE     4000   /* max bytes per script incl. NUL (NVS string limit) */
 #define SCRIPT_NAME_LEN     32
 
 /* Endpoint types that can be created dynamically */

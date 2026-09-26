@@ -1032,7 +1032,7 @@ static esp_err_t api_script_post(httpd_req_t *req)
     int len = recv_body(req, body, sizeof(body));
     if (len == -2) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                            "script too large (max 2048 bytes)");
+                            "script too large (max 3999 bytes)");
         return ESP_FAIL;
     }
     if (len <= 0) {
@@ -1078,7 +1078,7 @@ static esp_err_t api_script_post(httpd_req_t *req)
         if (strlen(j_script->valuestring) >= SCRIPT_MAX_SIZE) {
             cJSON_Delete(root);
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                                "script too large (max 2047 bytes)");
+                                "script too large (max 3999 bytes)");
             return ESP_FAIL;
         }
         strncpy(cfg.script, j_script->valuestring, SCRIPT_MAX_SIZE - 1);
@@ -1241,7 +1241,7 @@ void web_api_start_httpd(void)
     }
     httpd_handle_t srv = NULL;
     httpd_config_t hc = HTTPD_DEFAULT_CONFIG();
-    hc.stack_size         = 8192;
+    hc.stack_size         = 12288;
     hc.recv_wait_timeout  = 30;
     /* Both radios share one antenna: over Thread the node polls its parent, and
      * during the temporary WiFi window the station sleeps between beacons, so a
