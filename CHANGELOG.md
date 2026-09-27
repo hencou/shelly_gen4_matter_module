@@ -11,11 +11,17 @@ the update over Matter OTA.
   PCB button triggers it; the wall-switch (SW/SW2) and Add-on inputs never do.
   Uses the same safe path as the dashboard button: flag, reboot, wipe NVS
   before Matter/OpenThread start. The status LED blinks fast once accepted.
-- The Thread watchdog also recovers a detached node while WiFi is on
-  (**Always on** or the 10-minute window): after ~4 minutes detached it toggles
-  the Thread interface to force a fresh attach, repeating every 4 minutes,
-  without ever rebooting while WiFi is on. Previously it waited indefinitely
-  for WiFi to go off, leaving group bindings without a TBR dead until a reboot.
+- Thread first after a reboot: with WiFi **Always on**, WiFi is started only
+  once the node is attached to its Thread network (checked every 5 s, never
+  before 15 s, at most 3 minutes), so the attach is not disturbed by WiFi
+  traffic on the shared radio. The Thread watchdog keeps waiting while WiFi is
+  on and never toggles the Thread interface underneath an active WiFi link.
+- Thread traffic stays on the Thread interface while WiFi is connected. When
+  the WiFi STA got an IP it became the default IPv6 route, so Matter group
+  multicasts (`ff35::…`) and replies to peers behind a border router (ULA OMR
+  addresses) were routed to WiFi and failed with `ERR_RTE` (CHIP `3000004`),
+  leaving group bindings and CASE sessions dead as long as WiFi was on. An lwIP
+  IPv6 route hook now steers multicast and `fc00::/7` destinations to Thread.
 - Lua scripts may be up to 3999 bytes (was 2047); the management HTTP server
   stack grew accordingly.
 - SCRIPTS.md example 11: SW-input mode cycle on → off → LDR light control.

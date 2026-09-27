@@ -18,6 +18,7 @@ idf_component_register(
         "log_buffer.c"
         "status_led.c"
         "script_engine.c"
+        "thread_ip6_route.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES
         nvs_flash
@@ -44,9 +45,13 @@ idf_component_register(
 set_property(TARGET ${COMPONENT_LIB} PROPERTY CXX_STANDARD 17)
 target_compile_options(${COMPONENT_LIB} PRIVATE "-DCHIP_HAVE_CONFIG_H")
 
+# lwIP resolves the IPv6 route hook at link time; force the symbol from this
+# archive so the linker does not drop thread_ip6_route.c.
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-u lwip_hook_ip6_route")
+
 # C-modules zonder C++ extensies
 set_source_files_properties(
-    button.c relay.c sensors.c power_meter.c ade7953.c chip_temp.c hw_config.c ota.c shelly_boot.c loader_migrate.c stock_restore.c stock_fw.c web_api.c log_buffer.c status_led.c script_engine.c
+    button.c relay.c sensors.c power_meter.c ade7953.c chip_temp.c hw_config.c ota.c shelly_boot.c loader_migrate.c stock_restore.c stock_fw.c web_api.c log_buffer.c status_led.c script_engine.c thread_ip6_route.c
     PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter"
 )
 
