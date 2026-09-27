@@ -489,7 +489,7 @@ function run()
   end
 end
 ```
-
+---
 ## Button events reference
 
 | Event string | Description | Typical use |
