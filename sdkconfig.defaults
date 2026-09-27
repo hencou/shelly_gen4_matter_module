@@ -43,6 +43,9 @@ CONFIG_OPENTHREAD_CUSTOM_HEADER_FILE_NAME="openthread_custom_config.h"
 CONFIG_LWIP_IPV6_NUM_ADDRESSES=12
 CONFIG_LWIP_MULTICAST_PING=y
 CONFIG_LWIP_NETIF_STATUS_CALLBACK=y
+# IPv6 route hook (main/thread_ip6_route.c): Thread multicast/ULA stays on the
+# Thread netif while the WiFi STA is the lwIP default netif.
+CONFIG_LWIP_HOOK_IP6_ROUTE_CUSTOM=y
 CONFIG_MDNS_MULTIPLE_INSTANCE=y
 
 # mbedTLS: DTLS + ECJPAKE required by OpenThread secure_transport (commissioning)
