@@ -24,7 +24,6 @@ the update over Matter OTA.
   IPv6 route hook now steers multicast and `fc00::/7` destinations to Thread.
 - Lua scripts may be up to 3999 bytes (was 2047); the management HTTP server
   stack grew accordingly.
-- SCRIPTS.md example 11: SW-input mode cycle on → off → LDR light control.
 
 ## 1.6.5 — 2026-09-06
 
