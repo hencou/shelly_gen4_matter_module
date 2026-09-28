@@ -15,6 +15,7 @@ Copy-paste these into the **Scripts** tab of the management dashboard.
 - [8. Multi-input script (different behavior per button)](#8-multi-input-script-different-behavior-per-button)
 - [9. Relay toggle on short press](#9-relay-toggle-on-short-press)
 - [10. LDR light-dependent lamp control](#10-ldr-light-dependent-lamp-control)
+- [11. LDR control of a relay lamp and a dimmable lamp, manual relay toggle via SW](#11-ldr-control-of-a-relay-lamp-and-a-dimmable-lamp-manual-relay-toggle-via-sw)
 
 ---
 
@@ -490,6 +491,126 @@ function run()
 end
 ```
 ---
+## 11. LDR control of a relay lamp and a dimmable lamp, manual relay toggle via SW
+
+Two lamps follow one LDR on the analog input: a fluorescent tube ("TL") on
+the relay with a hysteresis around 55–60 %, and a dimmable Matter lamp that
+is dimmed along the duty cycle and switched off above 70 %. Above 100 % (sun
+override) both are off. Every change of the SW input toggles the relay by
+hand; at the next switching moment of the regulation (a TL threshold or the
+sun override) the relay follows the regulation again.
+
+| Setting | Value |
+|---|---|
+| Endpoint Type | OnOff Toggle + Dim + Color (client) |
+| Trigger | Periodic |
+| Period | 500 (0.5 seconds) |
+
+The SW input is polled every 500 ms so a flip is picked up quickly; the LDR
+regulation itself runs every 10th call (5 s). Only SW counts, not Digital IN
+or the PCB button.
+
+```lua
+-- Trigger: Periodic, 500 ms.
+-- LDR-regeling elke 5 s. Een standwissel van SW toggelt de TL (relais)
+-- handmatig; bij het eerstvolgende schakelmoment van de regeling
+-- (TL ON/OFF-drempel of zon-override) volgt de TL de regeling weer.
+
+local LDR_PERIOD_RUNS = 10       -- 10 x 500 ms = 5 s
+
+local tl_lower_level_off   = 55
+local tl_lower_level_on    = 60
+local bulb_upper_level_on  = 65
+local bulb_upper_level_off = 70
+local tl_upper_level_on    = 100
+local tl_upper_level_off   = 101
+
+local last_level   = -1
+local tl_state     = false       -- TL-stand die de regeling wil
+local bulb_state   = false
+local sun_override = false
+
+local last_sw = nil
+local runs    = 0
+
+-- Schakelmoment van de regeling: relais volgt weer, handbediening vervalt.
+local function tl_set(on, why)
+  tl_state = on
+  output.relay_set(on)
+  log(why .. " -> TL " .. (on and "ON" or "OFF"))
+end
+
+local function ldr_run()
+  local duty = 100 - input.analog()
+  log("duty=" .. duty .. "%")
+
+  if not sun_override and duty >= tl_upper_level_off then
+    sun_override = true
+  elseif sun_override and duty <= tl_upper_level_on then
+    sun_override = false
+  end
+
+  if sun_override then
+    if tl_state then
+      tl_set(false, "duty=" .. duty .. "% (zon)")
+    end
+    if bulb_state then
+      endpoint.command("off")
+      bulb_state = false
+      last_level = -1
+      log("duty=" .. duty .. "% -> bulb OFF (zon)")
+    end
+    return
+  end
+
+  if (not tl_state) and duty >= tl_lower_level_on then
+    tl_set(true, "duty=" .. duty .. "%")
+  elseif tl_state and duty <= tl_lower_level_off then
+    tl_set(false, "duty=" .. duty .. "%")
+  end
+
+  if bulb_state and duty >= bulb_upper_level_off then
+    endpoint.command("off")
+    bulb_state = false
+    last_level = -1
+    log("duty=" .. duty .. "% -> bulb OFF")
+  elseif (not bulb_state) and duty <= bulb_upper_level_on then
+    bulb_state = true
+  end
+
+  if bulb_state then
+    endpoint.command("on")
+    -- map 0..bulb_upper_level_off -> level 1..254
+    local level = math.floor(duty * 253 / bulb_upper_level_off) + 1
+    if level > 254 then level = 254 end
+    if level ~= last_level then
+      endpoint.command("move_to_level", {level=level, transition=10})
+      last_level = level
+      log("duty=" .. duty .. "% -> bulb level " .. level)
+    end
+  end
+end
+
+function run()
+  -- SW-standwissel: TL handmatig toggelen (regeling blijft doorlopen)
+  local sw = input.sw()
+  if last_sw == nil then
+    last_sw = sw
+  elseif sw ~= last_sw then
+    last_sw = sw
+    output.relay_toggle()
+    log("SW -> TL " .. (output.relay_state() and "ON" or "OFF") .. " (handmatig)")
+  end
+
+  runs = runs + 1
+  if runs >= LDR_PERIOD_RUNS then
+    runs = 0
+    ldr_run()
+  end
+end
+```
+---
+
 ## Button events reference
 
 | Event string | Description | Typical use |
