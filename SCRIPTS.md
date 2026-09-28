@@ -14,8 +14,7 @@ Copy-paste these into the **Scripts** tab of the management dashboard.
 - [7. Occupancy sensor (analog IN)](#7-occupancy-sensor-analog-in)
 - [8. Multi-input script (different behavior per button)](#8-multi-input-script-different-behavior-per-button)
 - [9. Relay toggle on short press](#9-relay-toggle-on-short-press)
-- [10. LDR light-dependent lamp control](#10-ldr-light-dependent-lamp-control)
-- [11. LDR control of a relay lamp and a dimmable lamp, manual relay toggle via SW](#11-ldr-control-of-a-relay-lamp-and-a-dimmable-lamp-manual-relay-toggle-via-sw)
+- [10. LDR control of a relay lamp and a dimmable lamp, manual relay toggle via SW](#11-ldr-control-of-a-relay-lamp-and-a-dimmable-lamp-manual-relay-toggle-via-sw)
 
 ---
 
@@ -442,56 +441,7 @@ end
 
 ---
 
-## 10. LDR light-dependent lamp control
-
-Controls lamp brightness based on an LDR (light sensor) connected to the
-analog input. When dark the lamp burns at minimum brightness; as ambient
-light increases the lamp gets brighter; above 90 % the lamp turns off.
-
-| Setting | Value |
-|---|---|
-| Endpoint Type | OnOff Toggle + Dim + Color (client) |
-| Trigger | Periodic |
-| Period | 5000 (5 seconds) |
-
-`input.analog()` returns the LDR duty cycle 0–100 %.
-Matter level range is 1–254 (1 = dimmest, 254 = full brightness).
-
-```lua
-local off_threshold = 90   -- above this: lamp off
-local last_level = -1      -- track to avoid redundant commands
-local was_off = false
-
-function run()
-  local duty = input.analog()
-
-  if duty >= off_threshold then
-    -- bright enough: turn lamp off
-    if not was_off then
-      endpoint.command("off")
-      was_off = true
-      last_level = -1
-      log("duty=" .. duty .. "% -> lamp OFF")
-    end
-  else
-    -- map 0..off_threshold → level 1..254
-    local level = math.floor(duty * 253 / off_threshold) + 1
-    if level > 254 then level = 254 end
-
-    if was_off then
-      endpoint.command("on")
-      was_off = false
-    end
-    if level ~= last_level then
-      endpoint.command("move_to_level", {level=level, transition=10})
-      last_level = level
-      log("duty=" .. duty .. "% -> level " .. level)
-    end
-  end
-end
-```
----
-## 11. LDR control of a relay lamp and a dimmable lamp, manual relay toggle via SW
+## 10. LDR control of a relay lamp and a dimmable lamp, manual relay toggle via SW
 
 Two lamps follow one LDR on the analog input: a fluorescent tube ("TL") on
 the relay with a hysteresis around 55–60 %, and a dimmable Matter lamp that
