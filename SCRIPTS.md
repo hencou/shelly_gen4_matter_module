@@ -14,7 +14,7 @@ Copy-paste these into the **Scripts** tab of the management dashboard.
 - [7. Occupancy sensor (analog IN)](#7-occupancy-sensor-analog-in)
 - [8. Multi-input script (different behavior per button)](#8-multi-input-script-different-behavior-per-button)
 - [9. Relay toggle on short press](#9-relay-toggle-on-short-press)
-- [10. LDR control of a relay lamp and a dimmable lamp, manual relay toggle via SW](#11-ldr-control-of-a-relay-lamp-and-a-dimmable-lamp-manual-relay-toggle-via-sw)
+- [10. LDR control of a relay lamp and a dimmable lamp, manual relay toggle via SW](#10-ldr-control-of-a-relay-lamp-and-a-dimmable-lamp-manual-relay-toggle-via-sw)
 
 ---
 
