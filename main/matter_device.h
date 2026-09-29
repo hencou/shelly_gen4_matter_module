@@ -114,6 +114,17 @@ esp_err_t matter_thread_sleepy_set(bool sleepy, uint32_t poll_period_ms);
  * ends with the window. */
 esp_err_t matter_thread_enabled_set(bool enabled);
 
+/* True once the device is part of at least one Matter fabric. */
+bool matter_is_commissioned(void);
+
+/* Pause/resume CHIPoBLE commissioning advertising. An uncommissioned device
+ * advertises continuously, and BLE advertising outranks WiFi in the coexistence
+ * arbiter: the station associates and even gets a DHCP lease, but afterwards
+ * hardly any frame gets through (no ping, no dashboard; a SoftAP client never
+ * gets a lease). Pausing it hands the radio to WiFi for the window; resume only
+ * restarts advertising while the commissioning window is still open. */
+esp_err_t matter_ble_advertising_set(bool enabled);
+
 /* Spike: log the device's Thread unicast IPv6 addresses (OMR / mesh-local /
  * link-local) so the management page can be reached over IPv6/Thread from a
  * browser. matter_thread_addr_log_start() also re-logs every 15 s (the OMR

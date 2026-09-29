@@ -323,6 +323,7 @@ The **WiFi** buttons on the dashboard (**WiFi & OTA** tab) join WiFi as a
   (stored in flash). Unlike the 10-minute window it never pauses the Lua
   scripts, so it needs enough free heap for the WiFi driver next to the
   configured slots — with many slots use the 10-minute window instead.
+  **Only available once the device is commissioned** (see below).
 - **Off** closes the window or ends "always on".
 
 The physical shortcut does exactly the same: **press any button 6× rapidly**
@@ -332,12 +333,28 @@ The physical shortcut does exactly the same: **press any button 6× rapidly**
 reboot. The next window uses them, so a wrong SSID costs a toggle instead of a
 restart. **Restart** next to it reboots the device on request.
 
-Both work regardless of commissioning status. Without saved WiFi credentials —
-or when they do not connect within a minute — the window switches to an **open
-SoftAP** `shelly-cfg-XXXXXX` with the dashboard on `http://192.168.4.1/` for the
-remainder of the ten minutes. That is how you reach a module that has never been
-commissioned, and it keeps a module with stale credentials reachable when Thread
-is not configured either.
+The 10-minute window works regardless of commissioning status. Without saved
+WiFi credentials — or when they do not connect within a minute — the window
+switches to an **open SoftAP** `shelly-cfg-XXXXXX` with the dashboard on
+`http://192.168.4.1/` for the remainder of the ten minutes. That is how you
+reach a module that has never been commissioned, and it keeps a module with
+stale credentials reachable when Thread is not configured either.
+
+##### Before commissioning: 10 minutes only, no "Always on"
+
+A module that is not in a Matter fabric yet (fresh install, after a factory
+reset or Commission Mode) has no Thread network but advertises continuously
+over **BLE** for pairing. BLE advertising outranks WiFi in the radio arbiter,
+so with both on the module associates and even gets an IP address but then
+hardly anything gets through: no ping, no dashboard, and a laptop on the SoftAP
+never gets a DHCP lease (it falls back to a 169.254.x.x address). The firmware
+therefore **pauses BLE pairing advertising for the duration of the WiFi
+window** and resumes it when the window closes. That is why **Always on is
+refused until the device is commissioned** — it would keep BLE, and with it
+commissioning, off for good — and why a stored "Always on" is downgraded to a
+10-minute window at boot as long as the device is uncommissioned (the setting
+is kept and takes effect again after commissioning). Commission the device
+first, then switch WiFi to Always on.
 
 ##### What temporary WiFi costs while it is open
 
@@ -551,7 +568,8 @@ The relay functions take an **optional 1-based channel** argument (`1` = relay 1
 |---|---|---|---|
 | **Not commissioned** | OFF | ON (BLE commissioning) | After flash or factory reset |
 | **Commissioned** (normal) | OFF | ON (Thread active) | Dashboard over Thread |
-| **WiFi next to Thread** (management) | ON — STA, SoftAP when STA fails | Thread active as sleepy End Device (no router role, no SRP fallback; Thread down if sleepy is refused) | "10 min" / "Always on" buttons or 6× press — no reboot; 10-min window restores itself, "Always on" survives reboots |
+| **WiFi next to Thread** (management) | ON — STA, SoftAP when STA fails | Thread active as sleepy End Device (no router role, no SRP fallback; Thread down if sleepy is refused) | "10 min" / "Always on" buttons or 6× press — no reboot; 10-min window restores itself, "Always on" survives reboots (commissioned devices only) |
+| **WiFi window, not commissioned** | ON — STA, SoftAP when STA fails | No Thread network; BLE pairing advertising paused until the window closes | "10 min" button or 6× press only — "Always on" is refused until commissioned |
 
 ## Status LED
 

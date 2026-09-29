@@ -490,6 +490,10 @@ static esp_err_t api_wifi_coex_post(httpd_req_t *req)
     esp_err_t err = ota_wifi_mode_set(want);
     if (err != ESP_OK) {
         httpd_resp_set_status(req, "409 Conflict");
+        if (want == OTA_WIFI_ALWAYS && err == ESP_ERR_INVALID_STATE)
+            return httpd_resp_sendstr(req, "Always on needs a commissioned device: "
+                                           "commission it over BLE first, use 10 min "
+                                           "until then");
         return httpd_resp_sendstr(req, esp_err_to_name(err));
     }
     return httpd_resp_sendstr(req, msg);
