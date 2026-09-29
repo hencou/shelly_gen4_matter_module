@@ -91,6 +91,15 @@ esp_err_t ota_factory_reset_request(void);
 void      ota_factory_reset_and_reboot(const char *reason);
 void      ota_factory_reset_at_boot(void);
 
+/* NVS restore from a backup: the decoded partition image is staged in the
+ * unused fs_0 partition (ota_nvs_restore_stage_*), and copied over the live nvs
+ * partition at the next boot (ota_nvs_restore_at_boot) for the same reason the
+ * factory reset is deferred. */
+esp_err_t ota_nvs_restore_stage_begin(void);
+esp_err_t ota_nvs_restore_stage_write(const void *data, size_t len);
+esp_err_t ota_nvs_restore_stage_commit(void);
+void      ota_nvs_restore_at_boot(void);
+
 /* SRP Server mode: enable Thread DNS-SD service discovery without full TBR.
  * When enabled, the Shelly runs an SRP server so other Thread devices can
  * register and resolve services (needed for CASE sessions without a TBR).
