@@ -5,6 +5,17 @@ every version are on the [Releases page](https://github.com/hencou/shelly_gen4_m
 The Matter `SoftwareVersion` is bumped with every release so controllers offer
 the update over Matter OTA.
 
+## 1.6.7 — 2026-09-08
+
+- Restoring a backup that includes the NVS image no longer crashes the module.
+  The decoded image is staged in the unused `fs_0` partition while it uploads
+  and, after a length/CRC check, copied over the `nvs` partition at the next
+  boot before Matter/OpenThread start — the same deferred path the factory
+  reset uses. Previously the live `nvs` partition was erased and rewritten
+  underneath the running Matter, OpenThread and Lua stacks. An incomplete or
+  corrupt upload is discarded and the current settings are kept. The Backup
+  tab now shows progress while the file uploads.
+
 ## 1.6.6 — 2026-09-07
 
 - Factory reset by holding the **onboard PCB button for 30 seconds**. Only the

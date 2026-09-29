@@ -260,6 +260,7 @@ extern "C" void app_main(void)
     shelly_boot_snapshot();
 
     ESP_ERROR_CHECK(nvs_flash_init());
+    ota_nvs_restore_at_boot();
     ota_factory_reset_at_boot();
 
     /* One-time migration to our ESP-IDF bootloader when the device still runs

@@ -638,11 +638,12 @@ static esp_err_t api_restore_post(httpd_req_t *req)
         return ESP_FAIL;
     }
     /* Stream the request body. The NVS base64 blob (up to ~85 KB) is decoded
-     * straight to the flash partition as it arrives, so we never hold the whole
-     * body in RAM — previously a single ~90 KB allocation that often OOMed on
-     * the ~200 KB heap while the Matter stack was running. Only the small header
-     * JSON (ota + scripts) is buffered for cJSON. The "nvs" field is emitted last
-     * by /api/backup, so the buffered header stays small. */
+     * as it arrives into the fs_0 staging area, so we never hold the whole body
+     * in RAM, and the live nvs partition is not touched while Matter/OpenThread
+     * and the script engine hold NVS handles (deinit under them crashes). The
+     * staged image is applied at the next boot (ota_nvs_restore_at_boot). Only
+     * the small header JSON (ota + scripts) is buffered for cJSON; /api/backup
+     * emits "nvs" last, so the buffered header stays small. */
     static const char MARKER[] = "\"nvs\":\"";
     const size_t MARKER_LEN = sizeof(MARKER) - 1;
 
@@ -654,13 +655,15 @@ static esp_err_t api_restore_post(httpd_req_t *req)
     }
 
     enum { PH_HEADER, PH_NVS, PH_TAIL } phase = PH_HEADER;
-    const esp_partition_t *nvs_part = NULL;
     size_t nvs_dst = 0;
     bool nvs_active = false, nvs_ok = true, failed = false;
-    char b64buf[1024];            /* multiple of 4 → base64 chunks stay aligned */
+    /* httpd runs handlers on a single task, so these can live off the 8 KB
+     * handler stack. b64buf is a multiple of 4 so base64 chunks stay aligned. */
+    static char b64buf[1024];
+    static uint8_t dec[768];
+    static char rbuf[1024];
     size_t b64n = 0;
 
-    char rbuf[1024];
     int received = 0;
 
     while (received < content_len && !failed) {
@@ -683,23 +686,24 @@ static esp_err_t api_restore_post(httpd_req_t *req)
                     memcmp(hdr + hdr_len - MARKER_LEN, MARKER, MARKER_LEN) == 0) {
                     hdr_len -= MARKER_LEN;                              /* drop marker */
                     if (hdr_len > 0 && hdr[hdr_len - 1] == ',') hdr_len--; /* drop separator */
-                    nvs_part = esp_partition_find_first(
-                        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, "nvs");
-                    if (nvs_part) {
-                        nvs_flash_deinit();
-                        esp_partition_erase_range(nvs_part, 0, nvs_part->size);
+                    esp_err_t serr = ota_nvs_restore_stage_begin();
+                    if (serr == ESP_OK) {
                         nvs_active = true;
+                    } else {
+                        ESP_LOGE(TAG, "restore: cannot stage NVS image: %s",
+                                 esp_err_to_name(serr));
+                        nvs_ok = false;
                     }
                     phase = PH_NVS;
                 }
             } else { /* PH_NVS: base64 value, decode straight to flash */
                 if (c == '"') {
                     if (nvs_active && b64n > 0) {
-                        uint8_t dec[768]; size_t olen = 0;
+                        size_t olen = 0;
                         if (mbedtls_base64_decode(dec, sizeof(dec), &olen,
                                 (const unsigned char *)b64buf, b64n) == 0 &&
-                            olen > 0 && nvs_dst + olen <= nvs_part->size) {
-                            esp_partition_write(nvs_part, nvs_dst, dec, olen);
+                            olen > 0 &&
+                            ota_nvs_restore_stage_write(dec, olen) == ESP_OK) {
                             nvs_dst += olen;
                         } else {
                             nvs_ok = false;
@@ -711,11 +715,11 @@ static esp_err_t api_restore_post(httpd_req_t *req)
                     b64buf[b64n++] = c;
                     if (b64n == sizeof(b64buf)) {
                         if (nvs_active) {
-                            uint8_t dec[768]; size_t olen = 0;
+                            size_t olen = 0;
                             if (mbedtls_base64_decode(dec, sizeof(dec), &olen,
                                     (const unsigned char *)b64buf, b64n) == 0 &&
-                                olen > 0 && nvs_dst + olen <= nvs_part->size) {
-                                esp_partition_write(nvs_part, nvs_dst, dec, olen);
+                                olen > 0 &&
+                                ota_nvs_restore_stage_write(dec, olen) == ESP_OK) {
                                 nvs_dst += olen;
                             } else {
                                 nvs_ok = false;
@@ -728,17 +732,22 @@ static esp_err_t api_restore_post(httpd_req_t *req)
         }
     }
 
-    if (nvs_active) {
-        nvs_flash_init();
-        if (nvs_ok && nvs_dst > 0)
-            ESP_LOGI(TAG, "restore: NVS written (%u bytes)", (unsigned)nvs_dst);
-        else if (!nvs_ok)
-            ESP_LOGW(TAG, "restore: NVS decode error after %u bytes", (unsigned)nvs_dst);
+    bool nvs_staged = false;
+    if (nvs_active && !failed && nvs_ok && nvs_dst > 0) {
+        nvs_staged = (ota_nvs_restore_stage_commit() == ESP_OK);
+    } else if (nvs_active) {
+        ESP_LOGW(TAG, "restore: NVS image discarded after %u bytes (%s)",
+                 (unsigned)nvs_dst, failed ? "recv failed" : "decode error");
     }
 
     if (failed) {
         free(hdr);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv failed");
+        return ESP_FAIL;
+    }
+    if (nvs_active && !nvs_staged) {
+        free(hdr);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "NVS image invalid");
         return ESP_FAIL;
     }
 
@@ -750,8 +759,9 @@ static esp_err_t api_restore_post(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    /* Restore WiFi credentials */
-    cJSON *ota = cJSON_GetObjectItem(root, "ota");
+    /* A staged NVS image already contains WiFi, hostname and scripts; writing
+     * them into the live partition now would only be thrown away at boot. */
+    cJSON *ota = nvs_staged ? NULL : cJSON_GetObjectItem(root, "ota");
     if (ota) {
         cJSON *j_ssid = cJSON_GetObjectItem(ota, "ssid");
         cJSON *j_pass = cJSON_GetObjectItem(ota, "pass");
@@ -773,8 +783,7 @@ static esp_err_t api_restore_post(httpd_req_t *req)
         }
     }
 
-    /* Restore scripts */
-    cJSON *scripts = cJSON_GetObjectItem(root, "scripts");
+    cJSON *scripts = nvs_staged ? NULL : cJSON_GetObjectItem(root, "scripts");
     if (scripts && cJSON_IsArray(scripts)) {
         cJSON *item;
         cJSON_ArrayForEach(item, scripts) {

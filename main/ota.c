@@ -42,6 +42,7 @@
 #include "esp_http_client.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
+#include "esp_rom_crc.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
@@ -422,6 +423,130 @@ void ota_factory_reset_at_boot(void)
     nvs_flash_deinit();
     ESP_ERROR_CHECK(nvs_flash_erase());
     ESP_ERROR_CHECK(nvs_flash_init());
+}
+
+/* NVS restore staging. fs_0 is a stock placeholder this firmware never uses
+ * (return-to-stock overwrites it anyway). Sector 0 holds the header, written
+ * last so a half-uploaded image is never applied; the image starts at 0x1000. */
+#define NVS_STAGE_PART     "fs_0"
+#define NVS_STAGE_MAGIC    0x4E565352u /* "NVSR" */
+#define NVS_STAGE_DATA_OFF 0x1000
+
+typedef struct {
+    uint32_t magic;
+    uint32_t len;
+    uint32_t crc;
+} nvs_stage_hdr_t;
+
+static const esp_partition_t *s_stage_part = NULL;
+static size_t   s_stage_len = 0;
+static uint32_t s_stage_crc = 0;
+
+static const esp_partition_t *nvs_stage_partition(void)
+{
+    return esp_partition_find_first(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY,
+                                    NVS_STAGE_PART);
+}
+
+static const esp_partition_t *nvs_live_partition(void)
+{
+    return esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                    ESP_PARTITION_SUBTYPE_DATA_NVS, "nvs");
+}
+
+esp_err_t ota_nvs_restore_stage_begin(void)
+{
+    const esp_partition_t *nvs = nvs_live_partition();
+    s_stage_part = nvs_stage_partition();
+    if (!s_stage_part || !nvs) return ESP_ERR_NOT_FOUND;
+    if (s_stage_part->size < NVS_STAGE_DATA_OFF + nvs->size) return ESP_ERR_INVALID_SIZE;
+    s_stage_len = 0;
+    s_stage_crc = 0;
+    return esp_partition_erase_range(s_stage_part, 0, NVS_STAGE_DATA_OFF + nvs->size);
+}
+
+esp_err_t ota_nvs_restore_stage_write(const void *data, size_t len)
+{
+    const esp_partition_t *nvs = nvs_live_partition();
+    if (!s_stage_part || !nvs) return ESP_ERR_INVALID_STATE;
+    if (s_stage_len + len > nvs->size) return ESP_ERR_INVALID_SIZE;
+    esp_err_t err = esp_partition_write(s_stage_part, NVS_STAGE_DATA_OFF + s_stage_len,
+                                        data, len);
+    if (err != ESP_OK) return err;
+    s_stage_crc = esp_rom_crc32_le(s_stage_crc, (const uint8_t *)data, len);
+    s_stage_len += len;
+    return ESP_OK;
+}
+
+esp_err_t ota_nvs_restore_stage_commit(void)
+{
+    if (!s_stage_part || s_stage_len == 0) return ESP_ERR_INVALID_STATE;
+    nvs_stage_hdr_t hdr = { NVS_STAGE_MAGIC, (uint32_t)s_stage_len, s_stage_crc };
+    esp_err_t err = esp_partition_write(s_stage_part, 0, &hdr, sizeof(hdr));
+    s_stage_part = NULL;
+    if (err == ESP_OK)
+        ESP_LOGW(TAG, "restore: %u-byte NVS image staged, applied at the next boot",
+                 (unsigned)s_stage_len);
+    return err;
+}
+
+void ota_nvs_restore_at_boot(void)
+{
+    const esp_partition_t *stage = nvs_stage_partition();
+    const esp_partition_t *nvs   = nvs_live_partition();
+    if (!stage || !nvs) return;
+
+    nvs_stage_hdr_t hdr;
+    if (esp_partition_read(stage, 0, &hdr, sizeof(hdr)) != ESP_OK) return;
+    if (hdr.magic != NVS_STAGE_MAGIC) return;
+
+    if (hdr.len == 0 || hdr.len > nvs->size) {
+        ESP_LOGE(TAG, "restore: staged NVS image has bad length %" PRIu32 " — discarded",
+                 hdr.len);
+        esp_partition_erase_range(stage, 0, NVS_STAGE_DATA_OFF);
+        return;
+    }
+
+    /* Verify the staged image first: the live nvs is only erased once we know
+     * the replacement is intact. */
+    static uint8_t buf[4096];
+    uint32_t crc = 0;
+    esp_err_t err = ESP_OK;
+    for (uint32_t off = 0; err == ESP_OK && off < hdr.len; off += sizeof(buf)) {
+        size_t n = hdr.len - off < sizeof(buf) ? hdr.len - off : sizeof(buf);
+        err = esp_partition_read(stage, NVS_STAGE_DATA_OFF + off, buf, n);
+        if (err == ESP_OK) crc = esp_rom_crc32_le(crc, buf, n);
+    }
+    if (err != ESP_OK || crc != hdr.crc) {
+        ESP_LOGE(TAG, "restore: staged NVS image unreadable or CRC mismatch — "
+                      "discarded, current nvs kept");
+        esp_partition_erase_range(stage, 0, NVS_STAGE_DATA_OFF);
+        return;
+    }
+
+    ESP_LOGW(TAG, "restore: applying staged NVS image (%" PRIu32 " bytes) before "
+                  "Matter/Thread start", hdr.len);
+    nvs_flash_deinit();
+
+    err = esp_partition_erase_range(nvs, 0, nvs->size);
+    for (uint32_t off = 0; err == ESP_OK && off < hdr.len; off += sizeof(buf)) {
+        size_t n = hdr.len - off < sizeof(buf) ? hdr.len - off : sizeof(buf);
+        err = esp_partition_read(stage, NVS_STAGE_DATA_OFF + off, buf, n);
+        if (err == ESP_OK) err = esp_partition_write(nvs, off, buf, n);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "restore: applying NVS image failed: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGW(TAG, "restore: NVS image applied");
+    }
+
+    esp_partition_erase_range(stage, 0, NVS_STAGE_DATA_OFF);
+    err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(err);
 }
 
 static void wifi_always_save(bool on)
