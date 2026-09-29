@@ -5,6 +5,21 @@ every version are on the [Releases page](https://github.com/hencou/shelly_gen4_m
 The Matter `SoftwareVersion` is bumped with every release so controllers offer
 the update over Matter OTA.
 
+## 1.6.8 — 2026-09-09
+
+- WiFi on a module that is **not commissioned yet** (fresh install, factory
+  reset, Commission Mode) is usable again. Such a module advertises
+  continuously over BLE for pairing, and BLE outranks WiFi in the radio
+  arbiter: the station got an IP address but no ping or dashboard came
+  through, and a laptop on the SoftAP never got a DHCP lease. The 10-minute
+  window now pauses BLE pairing advertising while it is open and resumes it
+  when it closes, and no longer registers the (idle) 802.15.4 stack with the
+  arbiter in that state.
+- **Always on** WiFi is only accepted once the device is commissioned; before
+  that the dashboard reports why and offers the 10-minute window. A stored
+  "Always on" on an uncommissioned module opens a 10-minute window at boot
+  instead, and takes effect again after commissioning. Documented in the README.
+
 ## 1.6.7 — 2026-09-08
 
 - Restoring a backup that includes the NVS image no longer crashes the module.

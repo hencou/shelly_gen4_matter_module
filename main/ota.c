@@ -348,6 +348,13 @@ static bool load_sta_credentials(char *ssid, size_t ssidlen,
  * that is not commissioned yet (no Thread network, hence no dashboard over
  * IPv6), where closing the window early would leave it unreachable.
  *
+ * Not commissioned means no Thread stack to yield the radio but continuous
+ * CHIPoBLE advertising instead, which the arbiter ranks above WiFi: the station
+ * associates and gets a lease, then nothing else gets through. So in that state
+ * the 802.15.4 arbiter is left alone, BLE advertising is paused for the window
+ * and resumed afterwards, and "always on" is refused (it would keep BLE, and
+ * with it commissioning, off forever) — the 10-minute window is the way in.
+ *
  * Setup and teardown both happen in this one task, so the window closes on its
  * own without a reboot.
  *
@@ -376,6 +383,10 @@ static bool s_coex_thread_down = false;
 static bool s_coex_scripts_suspended = false;
 /* "Always on": the window has no deadline and survives a reboot (NVS). */
 static volatile bool s_coex_persistent = false;
+/* Window opened on a device that is not commissioned: no Thread network to
+ * stand down from, but BLE commissioning advertising to pause instead. */
+static bool s_coex_uncommissioned = false;
+static bool s_coex_ble_paused = false;
 
 static bool wifi_coex_open(void)
 {
@@ -592,13 +603,23 @@ static void wifi_coex_teardown(void)
 #if CONFIG_ESP_COEX_SW_COEXIST_ENABLE && CONFIG_SOC_IEEE802154_SUPPORTED
         /* WiFi is gone, so make sure 802.15.4 is registered as a radio client
          * again and gets the whole radio back. */
-        esp_coex_ieee802154_status_enable();
+        if (!s_coex_uncommissioned) esp_coex_ieee802154_status_enable();
 #endif
     }
 
     if (s_coex_scripts_suspended) {
         script_engine_resume();
         s_coex_scripts_suspended = false;
+    }
+
+    if (s_coex_uncommissioned) {
+        if (s_coex_ble_paused) {
+            matter_ble_advertising_set(true);
+            s_coex_ble_paused = false;
+        }
+        s_coex_uncommissioned = false;
+        ESP_LOGW(TAG, "wifi_coex: WiFi off, BLE commissioning advertising resumed");
+        return;
     }
 
     if (s_coex_thread_down) {
@@ -637,6 +658,10 @@ static void wifi_coex_yield_radio(void)
 static esp_err_t wifi_coex_arbiter_enable(void)
 {
 #if CONFIG_ESP_COEX_SW_COEXIST_ENABLE && CONFIG_SOC_IEEE802154_SUPPORTED
+    /* No Thread stack running yet: the WiFi/BLE arbitration the driver sets up
+     * on its own is the right one, and registering 802.15.4 next to it would
+     * put WiFi in a three-way split Espressif does not support. */
+    if (s_coex_uncommissioned) return ESP_OK;
     esp_err_t err = esp_coex_wifi_i154_enable();
     if (err != ESP_OK)
         ESP_LOGE(TAG, "wifi_coex: coexistence arbiter refused to start (%s) — "
@@ -751,11 +776,24 @@ static void wifi_coex_task(void *arg)
         if (sta) esp_netif_set_hostname(sta, ota_hostname_get());
     }
 
-    /* Stand down as router BEFORE the WiFi radio starts competing, so the mesh
-     * sees an orderly downgrade instead of a router that stops responding. */
-    matter_srp_fallback_pause(true);
-    matter_thread_router_eligible_set(false);
-    wifi_coex_yield_radio();
+    s_coex_uncommissioned = !matter_is_commissioned();
+    if (s_coex_uncommissioned) {
+        /* Nothing to attach to yet, so Thread needs no standing down; the
+         * radio competitor here is CHIPoBLE advertising, which outranks WiFi in
+         * the arbiter. Pause it for the window and resume it afterwards, so
+         * the device can still be commissioned over BLE. */
+        s_coex_ble_paused = (matter_ble_advertising_set(false) == ESP_OK);
+        ESP_LOGW(TAG, "wifi_coex: device not commissioned — WiFi window without "
+                      "Thread, BLE advertising %s",
+                 s_coex_ble_paused ? "paused" : "could not be paused");
+    } else {
+        /* Stand down as router BEFORE the WiFi radio starts competing, so the
+         * mesh sees an orderly downgrade instead of a router that stops
+         * responding. */
+        matter_srp_fallback_pause(true);
+        matter_thread_router_eligible_set(false);
+        wifi_coex_yield_radio();
+    }
 
     if (!s_coex_wifi_inited) {
         wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -934,6 +972,12 @@ esp_err_t ota_wifi_mode_set(ota_wifi_mode_t mode)
 {
     switch (mode) {
     case OTA_WIFI_ALWAYS:
+        /* Permanent WiFi on an uncommissioned device would keep BLE
+         * commissioning paused forever; the 10-minute window is the way in. */
+        if (!matter_is_commissioned()) {
+            ESP_LOGW(TAG, "wifi_coex: 'always on' refused — device not commissioned");
+            return ESP_ERR_INVALID_STATE;
+        }
         wifi_always_save(true);
         s_coex_persistent = true;
         ESP_LOGW(TAG, "wifi_coex: always on (persistent)");
@@ -961,6 +1005,13 @@ ota_wifi_mode_t ota_wifi_mode_get(void)
 bool ota_wifi_mode_boot(void)
 {
     if (!wifi_always_load()) return false;
+    if (!matter_is_commissioned()) {
+        /* Setting kept (Commission Mode preserves WiFi settings), but until the
+         * device is in a fabric only the 10-minute window is safe. */
+        ESP_LOGW(TAG, "wifi_coex: 'always on' stored but device not commissioned — "
+                      "opening a 10-minute window instead");
+        return ota_wifi_coex_start() == ESP_OK;
+    }
     ESP_LOGW(TAG, "wifi_coex: 'always on' stored — starting WiFi next to Thread");
     s_coex_persistent = true;
     wifi_coex_launch();

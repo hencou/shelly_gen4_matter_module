@@ -1530,6 +1530,39 @@ extern "C" esp_err_t matter_thread_enabled_set(bool enabled)
 #endif
 }
 
+extern "C" bool matter_is_commissioned(void)
+{
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    bool commissioned = chip::Server::GetInstance().GetFabricTable().FabricCount() > 0;
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+    return commissioned;
+}
+
+extern "C" esp_err_t matter_ble_advertising_set(bool enabled)
+{
+#if CONFIG_ENABLE_CHIPOBLE
+    auto &conn = chip::DeviceLayer::ConnectivityMgr();
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    bool window_open =
+        chip::Server::GetInstance().GetCommissioningWindowManager().IsCommissioningWindowOpen();
+    CHIP_ERROR err = CHIP_NO_ERROR;
+    if (!enabled || window_open)
+        err = conn.SetBLEAdvertisingEnabled(enabled);
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "BLE advertising %s failed: %" CHIP_ERROR_FORMAT,
+                 enabled ? "resume" : "pause", err.Format());
+        return ESP_FAIL;
+    }
+    ESP_LOGW(TAG, "BLE commissioning advertising %s",
+             !enabled ? "paused" : window_open ? "resumed" : "not resumed (window closed)");
+    return ESP_OK;
+#else
+    (void)enabled;
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
 /* ------------------------------------------------------------------------- *
  * Thread IPv6 address logger (spike): print the device's Thread unicast
  * addresses so the management page can be reached over IPv6/Thread from a
