@@ -120,13 +120,14 @@ bool matter_thread_is_enabled(void);
 /* True once the device is part of at least one Matter fabric. */
 bool matter_is_commissioned(void);
 
-/* Pause/resume CHIPoBLE commissioning advertising. An uncommissioned device
- * advertises continuously, and BLE advertising outranks WiFi in the coexistence
- * arbiter: the station associates and even gets a DHCP lease, but afterwards
- * hardly any frame gets through (no ping, no dashboard; a SoftAP client never
- * gets a lease). Pausing it hands the radio to WiFi for the window; resume only
- * restarts advertising while the commissioning window is still open. */
-esp_err_t matter_ble_advertising_set(bool enabled);
+/* Shut CHIPoBLE down and hand the NimBLE host and BLE controller memory back
+ * to the heap. An uncommissioned device keeps BLE running for pairing, and next
+ * to it, Matter and the WiFi driver only ~3 kB of heap is left: the station
+ * gets a DHCP lease but TCP sends fail with EAGAIN and the dashboard never
+ * loads. Waits up to timeout_ms for the memory to be released. BLE cannot come
+ * back without a reboot (CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING releases its
+ * memory for good). */
+esp_err_t matter_ble_release(uint32_t timeout_ms);
 
 /* Spike: log the device's Thread unicast IPv6 addresses (OMR / mesh-local /
  * link-local) so the management page can be reached over IPv6/Thread from a

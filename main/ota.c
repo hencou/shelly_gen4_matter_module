@@ -384,9 +384,11 @@ static bool s_coex_scripts_suspended = false;
 /* "Always on": the window has no deadline and survives a reboot (NVS). */
 static volatile bool s_coex_persistent = false;
 /* Window opened on a device that is not commissioned: no Thread network to
- * stand down from, but BLE commissioning advertising to pause instead. */
+ * stand down from, but BLE to shut down for its memory instead. */
 static bool s_coex_uncommissioned = false;
-static bool s_coex_ble_paused = false;
+/* BLE is gone until the next boot, so closing the window reboots into the
+ * commissioning path. */
+static bool s_coex_ble_released = false;
 
 static bool wifi_coex_open(void)
 {
@@ -613,16 +615,17 @@ static void wifi_coex_teardown(void)
     }
 
     if (s_coex_uncommissioned) {
+        if (s_coex_ble_released) {
+            ESP_LOGW(TAG, "wifi_coex: WiFi off, rebooting into BLE commissioning");
+            vTaskDelay(pdMS_TO_TICKS(500));
+            esp_restart();
+        }
         if (s_coex_thread_down) {
             matter_thread_enabled_set(true);
             s_coex_thread_down = false;
         }
-        if (s_coex_ble_paused) {
-            matter_ble_advertising_set(true);
-            s_coex_ble_paused = false;
-        }
         s_coex_uncommissioned = false;
-        ESP_LOGW(TAG, "wifi_coex: WiFi off, BLE commissioning advertising resumed");
+        ESP_LOGW(TAG, "wifi_coex: WiFi off");
         return;
     }
 
@@ -782,20 +785,22 @@ static void wifi_coex_task(void *arg)
 
     s_coex_uncommissioned = !matter_is_commissioned();
     if (s_coex_uncommissioned) {
-        /* Nothing to attach to yet, so Thread needs no standing down; the
-         * radio competitor here is CHIPoBLE advertising, which outranks WiFi in
-         * the arbiter. Pause it for the window and resume it afterwards, so
-         * the device can still be commissioned over BLE. */
-        s_coex_ble_paused = (matter_ble_advertising_set(false) == ESP_OK);
+        /* Nothing to attach to yet, so Thread needs no standing down. BLE
+         * outranks WiFi in the arbiter and, next to Matter and the WiFi
+         * driver, leaves ~3 kB of heap: the dashboard fails with EAGAIN on
+         * every send. Shut it down for good; closing the window reboots, and
+         * the next boot advertises for commissioning again. */
+        esp_err_t ble_err = matter_ble_release(10000);
+        s_coex_ble_released = (ble_err != ESP_ERR_NOT_SUPPORTED);
         /* A provisioned-but-fabricless node (last fabric removed) can still
          * have its Thread interface up; nothing uses it here, so give WiFi the
          * whole radio. */
         if (matter_thread_is_enabled())
             s_coex_thread_down = (matter_thread_enabled_set(false) == ESP_OK);
         ESP_LOGW(TAG, "wifi_coex: device not commissioned — WiFi window without "
-                      "Thread (%s), BLE advertising %s",
+                      "Thread (%s) and without BLE (%s), reboot when it closes",
                  s_coex_thread_down ? "interface taken down" : "interface already down",
-                 s_coex_ble_paused ? "paused" : "could not be paused");
+                 ble_err == ESP_OK ? "memory released" : esp_err_to_name(ble_err));
     } else {
         /* Stand down as router BEFORE the WiFi radio starts competing, so the
          * mesh sees an orderly downgrade instead of a router that stops

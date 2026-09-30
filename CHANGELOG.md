@@ -17,6 +17,11 @@ the update over Matter OTA.
   traffic: the station had an IP address but answered no ping, lost the AP
   and could not re-authenticate. While the window is open the log now reports
   link state, RSSI, channel and free heap every 10 s.
+- Even with the reduced buffers only ~3 kB of heap was left before
+  commissioning, so the dashboard failed with `httpd_sock_err: error in send :
+  11`. The window before commissioning now shuts BLE down and releases its
+  memory, and reboots when it closes so the module advertises for
+  commissioning again.
 - WiFi on a module that is **not commissioned yet** (fresh install, factory
   reset, Commission Mode) is usable again. Such a module advertises
   continuously over BLE for pairing, and BLE outranks WiFi in the radio

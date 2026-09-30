@@ -351,11 +351,16 @@ reset or Commission Mode) has no Thread network but advertises continuously
 over **BLE** for pairing. BLE advertising outranks WiFi in the radio arbiter,
 so with both on the module associates and even gets an IP address but then
 hardly anything gets through: no ping, no dashboard, and a laptop on the SoftAP
-never gets a DHCP lease (it falls back to a 169.254.x.x address). The firmware
-therefore **pauses BLE pairing advertising for the duration of the WiFi
-window** and resumes it when the window closes. That is why **Always on is
-refused until the device is commissioned** — it would keep BLE, and with it
-commissioning, off for good — and why a stored "Always on" is downgraded to a
+never gets a DHCP lease (it falls back to a 169.254.x.x address). BLE also
+holds so much heap that next to Matter and the WiFi driver only ~3 kB is left,
+too little for the dashboard's TCP sends. The firmware therefore **shuts BLE
+down and releases its memory when the WiFi window opens**, and **reboots when
+the window closes** (after 10 minutes, or via Off): the fresh boot advertises
+over BLE for commissioning again. A reboot from the dashboard also ends the
+window, since an uncommissioned module boots without WiFi; press 6× again to
+reopen it. That is why **Always on is refused until the device is
+commissioned** — it would keep BLE, and with it commissioning, off for good —
+and why a stored "Always on" is downgraded to a
 10-minute window at boot as long as the device is uncommissioned (the setting
 is kept and takes effect again after commissioning). Commission the device
 first, then switch WiFi to Always on.
@@ -578,7 +583,7 @@ The relay functions take an **optional 1-based channel** argument (`1` = relay 1
 | **Not commissioned** | OFF | ON (BLE commissioning) | After flash or factory reset |
 | **Commissioned** (normal) | OFF | ON (Thread active) | Dashboard over Thread |
 | **WiFi next to Thread** (management) | ON — STA, SoftAP when STA fails | Thread active as sleepy End Device (no router role, no SRP fallback; Thread down if sleepy is refused) | "10 min" / "Always on" buttons or 6× press — no reboot; 10-min window restores itself, "Always on" survives reboots (commissioned devices only) |
-| **WiFi window, not commissioned** | ON — STA, SoftAP when STA fails | No Thread network; BLE pairing advertising paused until the window closes | "10 min" button or 6× press only — "Always on" is refused until commissioned |
+| **WiFi window, not commissioned** | ON — STA, SoftAP when STA fails | No Thread network; BLE shut down, reboot into BLE commissioning when the window closes | "10 min" button or 6× press only — "Always on" is refused until commissioned |
 
 ## Status LED
 
