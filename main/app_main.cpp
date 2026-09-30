@@ -198,6 +198,10 @@ extern "C" void on_button_event(input_id_t id, button_event_t evt)
 
     if (evt == BTN_EVT_MODE_TOGGLE) {
         ESP_LOGW(TAG, "MODE_TOGGLE from input %d -> WiFi for 10 min next to Thread", id);
+        /* The PCB button is only reachable with the module on the bench, where
+         * the UART0 log on J6 is what is needed to debug the WiFi window. */
+        if (id == INPUT_DEVICE_BTN)
+            sensors_release_uart0();
         ota_wifi_coex_start();
         return;
     }

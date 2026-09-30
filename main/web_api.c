@@ -194,6 +194,9 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
     } else if (g_bench_mode) {
         snprintf(ana_str, sizeof(ana_str), "N/A (bench mode)");
         snprintf(temp_str, sizeof(temp_str), "N/A (bench mode)");
+    } else if (!sensors_own_uart0_pins()) {
+        snprintf(ana_str, sizeof(ana_str), "N/A (UART0 console)");
+        snprintf(temp_str, sizeof(temp_str), "N/A (UART0 console until reboot)");
     } else {
         /* Report the values the sensor tasks already read. Probing the 1-Wire
          * bus here would race temp_task and miss the DS18B20 presence pulse. */

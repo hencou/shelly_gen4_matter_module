@@ -25,6 +25,7 @@
 #include "driver/gpio.h"
 #include "esp_private/periph_ctrl.h"
 #include "soc/periph_defs.h"
+#include "soc/uart_pins.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -37,6 +38,9 @@ static const char *TAG = "sensors";
  * higher-priority occupancy sampling preempts every 1-Wire transaction, so no
  * DS18B20 read ever completes. */
 static SemaphoreHandle_t s_addon_bus;
+
+/* Set once sensors_release_uart0() holds s_addon_bus for good. */
+static volatile bool s_uart0_released;
 
 /* Latest values cached by the sensor tasks. The management page reads these
  * instead of driving the 1-Wire bus itself — two masters on the same bus race
@@ -491,6 +495,42 @@ void sensors_init(temp_cb_t temp_cb, occupancy_cb_t occ_cb, analog_cb_t analog_c
     }
 }
 
+bool sensors_own_uart0_pins(void)
+{
+    return s_addon_bus && !s_uart0_released;
+}
+
+void sensors_release_uart0(void)
+{
+    if (!sensors_own_uart0_pins()) return;
+
+    /* Never given back: both sensor tasks block on it until the next reboot. */
+    xSemaphoreTake(s_addon_bus, portMAX_DELAY);
+    s_uart0_released = true;
+    s_temp_valid = false;
+    s_last_duty = -1;
+    s_temp_err = "sensors paused, GPIO16/17 handed back to the UART0 console";
+
+    /* occ_task left a pull-down on RX; an idle UART line must float high. */
+    gpio_pulldown_dis(U0RXD_GPIO_NUM);
+    gpio_pullup_en(U0RXD_GPIO_NUM);
+
+    const uart_config_t cfg = {
+        .baud_rate  = CONFIG_ESP_CONSOLE_UART_BAUDRATE,
+        .data_bits  = UART_DATA_8_BITS,
+        .parity     = UART_PARITY_DISABLE,
+        .stop_bits  = UART_STOP_BITS_1,
+        .flow_ctrl  = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+    esp_err_t err = uart_param_config(UART_NUM_0, &cfg);
+    if (err == ESP_OK)
+        err = uart_set_pin(UART_NUM_0, U0TXD_GPIO_NUM, U0RXD_GPIO_NUM,
+                           UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    ESP_LOGW(TAG, "UART0 console on GPIO%d/%d %s, Add-on sensors paused until reboot",
+             U0TXD_GPIO_NUM, U0RXD_GPIO_NUM, err == ESP_OK ? "restored" : "restore FAILED");
+}
+
 /* ========================== On-demand 1-Wire diagnostics ================= */
 
 size_t sensors_ow_probe(char *out, size_t out_size)
@@ -505,6 +545,11 @@ size_t sensors_ow_probe(char *out, size_t out_size)
         return snprintf(out, out_size,
                         "bench mode is ON: sensor tasks are not running and "
                         "GPIO%d/%d are left to UART0\n", OW_TX, OW_RX);
+    }
+    if (s_uart0_released) {
+        return snprintf(out, out_size,
+                        "UART0 console restored (6x PCB button): sensor tasks "
+                        "paused until reboot\n");
     }
     if (!s_addon_bus) {
         return snprintf(out, out_size, "Add-on bus mutex missing — sensor tasks never started\n");
