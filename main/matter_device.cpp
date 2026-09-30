@@ -32,6 +32,7 @@ extern "C" {
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "esp_random.h"
 #include "nvs.h"
 }
@@ -59,6 +60,9 @@ extern "C" {
 #include <platform/PlatformManager.h>
 #include <platform/ThreadStackManager.h>
 #include <platform/ConnectivityManager.h>
+#if CONFIG_ENABLE_CHIPOBLE
+#include <platform/internal/BLEManager.h>
+#endif
 #include <lib/dnssd/platform/Dnssd.h>
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
@@ -1547,27 +1551,38 @@ extern "C" bool matter_is_commissioned(void)
     return commissioned;
 }
 
-extern "C" esp_err_t matter_ble_advertising_set(bool enabled)
+#if CONFIG_ENABLE_CHIPOBLE
+static volatile bool s_ble_released = false;
+
+static void ble_deinit_handler(const chip::DeviceLayer::ChipDeviceEvent *event,
+                               intptr_t /*arg*/)
+{
+    if (event->Type == chip::DeviceLayer::DeviceEventType::kBLEDeinitialized)
+        s_ble_released = true;
+}
+#endif
+
+extern "C" esp_err_t matter_ble_release(uint32_t timeout_ms)
 {
 #if CONFIG_ENABLE_CHIPOBLE
-    auto &conn = chip::DeviceLayer::ConnectivityMgr();
+    size_t before = heap_caps_get_free_size(MALLOC_CAP_8BIT);
     chip::DeviceLayer::PlatformMgr().LockChipStack();
-    bool window_open =
-        chip::Server::GetInstance().GetCommissioningWindowManager().IsCommissioningWindowOpen();
-    CHIP_ERROR err = CHIP_NO_ERROR;
-    if (!enabled || window_open)
-        err = conn.SetBLEAdvertisingEnabled(enabled);
+    chip::DeviceLayer::PlatformMgr().AddEventHandler(ble_deinit_handler, 0);
+    chip::DeviceLayer::Internal::BLEMgr().Shutdown();
     chip::DeviceLayer::PlatformMgr().UnlockChipStack();
-    if (err != CHIP_NO_ERROR) {
-        ESP_LOGE(TAG, "BLE advertising %s failed: %" CHIP_ERROR_FORMAT,
-                 enabled ? "resume" : "pause", err.Format());
-        return ESP_FAIL;
+    for (uint32_t waited = 0; !s_ble_released && waited < timeout_ms; waited += 100)
+        vTaskDelay(pdMS_TO_TICKS(100));
+    size_t after = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    if (!s_ble_released) {
+        ESP_LOGE(TAG, "BLE shut down, but its memory was not released within %u ms "
+                      "(free heap %u)", (unsigned)timeout_ms, (unsigned)after);
+        return ESP_ERR_TIMEOUT;
     }
-    ESP_LOGW(TAG, "BLE commissioning advertising %s",
-             !enabled ? "paused" : window_open ? "resumed" : "not resumed (window closed)");
+    ESP_LOGW(TAG, "BLE shut down and its memory released (free heap %u -> %u)",
+             (unsigned)before, (unsigned)after);
     return ESP_OK;
 #else
-    (void)enabled;
+    (void)timeout_ms;
     return ESP_ERR_NOT_SUPPORTED;
 #endif
 }
