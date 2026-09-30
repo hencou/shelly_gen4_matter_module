@@ -5,7 +5,7 @@ every version are on the [Releases page](https://github.com/hencou/shelly_gen4_m
 The Matter `SoftwareVersion` is bumped with every release so controllers offer
 the update over Matter OTA.
 
-## 1.6.8 — 2026-09-09
+## 1.6.7 — 2026-09-08
 
 - WiFi on a module that is **not commissioned yet** (fresh install, factory
   reset, Commission Mode) is usable again. Such a module advertises
@@ -19,9 +19,13 @@ the update over Matter OTA.
   that the dashboard reports why and offers the 10-minute window. A stored
   "Always on" on an uncommissioned module opens a 10-minute window at boot
   instead, and takes effect again after commissioning. Documented in the README.
-
-## 1.6.7 — 2026-09-08
-
+- The 10-minute WiFi window on a module that is **not commissioned yet** is
+  reachable from the browser again. With no Thread traffic to share the radio
+  with, the station now stays awake (no modem sleep, which made the AP buffer
+  every frame for the dashboard), the WiFi driver uses its default buffer sizes
+  when the heap allows it (the reduced set with 3 RX buffers and no block-ack
+  is still the fallback), and a Thread interface that is still up without a
+  fabric is taken down for the window and brought back when it closes.
 - Restoring a backup that includes the NVS image no longer crashes the module.
   The decoded image is staged in the unused `fs_0` partition while it uploads
   and, after a length/CRC check, copied over the `nvs` partition at the next

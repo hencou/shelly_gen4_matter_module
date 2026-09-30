@@ -114,6 +114,9 @@ esp_err_t matter_thread_sleepy_set(bool sleepy, uint32_t poll_period_ms);
  * ends with the window. */
 esp_err_t matter_thread_enabled_set(bool enabled);
 
+/* True while the Thread interface is up (attached or trying to attach). */
+bool matter_thread_is_enabled(void);
+
 /* True once the device is part of at least one Matter fabric. */
 bool matter_is_commissioned(void);
 

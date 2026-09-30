@@ -613,6 +613,10 @@ static void wifi_coex_teardown(void)
     }
 
     if (s_coex_uncommissioned) {
+        if (s_coex_thread_down) {
+            matter_thread_enabled_set(true);
+            s_coex_thread_down = false;
+        }
         if (s_coex_ble_paused) {
             matter_ble_advertising_set(true);
             s_coex_ble_paused = false;
@@ -783,8 +787,14 @@ static void wifi_coex_task(void *arg)
          * the arbiter. Pause it for the window and resume it afterwards, so
          * the device can still be commissioned over BLE. */
         s_coex_ble_paused = (matter_ble_advertising_set(false) == ESP_OK);
+        /* A provisioned-but-fabricless node (last fabric removed) can still
+         * have its Thread interface up; nothing uses it here, so give WiFi the
+         * whole radio. */
+        if (matter_thread_is_enabled())
+            s_coex_thread_down = (matter_thread_enabled_set(false) == ESP_OK);
         ESP_LOGW(TAG, "wifi_coex: device not commissioned — WiFi window without "
-                      "Thread, BLE advertising %s",
+                      "Thread (%s), BLE advertising %s",
+                 s_coex_thread_down ? "interface taken down" : "interface already down",
                  s_coex_ble_paused ? "paused" : "could not be paused");
     } else {
         /* Stand down as router BEFORE the WiFi radio starts competing, so the
@@ -797,8 +807,18 @@ static void wifi_coex_task(void *arg)
 
     if (!s_coex_wifi_inited) {
         wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-        wifi_coex_shrink_buffers(&cfg);
-        esp_err_t err = esp_wifi_init(&cfg);
+        esp_err_t err = ESP_ERR_NO_MEM;
+        /* Without Thread traffic to share the radio with, the shrunken buffers
+         * only cost the dashboard: with 3 RX buffers and no block-ack a burst
+         * of TCP segments overruns the driver and every loss waits for a
+         * retransmit. Use the default sizes when the heap allows it. */
+        if (s_coex_uncommissioned) err = esp_wifi_init(&cfg);
+        if (err == ESP_ERR_NO_MEM) {
+            wifi_coex_shrink_buffers(&cfg);
+            err = esp_wifi_init(&cfg);
+        } else if (err == ESP_OK) {
+            ESP_LOGI(TAG, "wifi_coex: WiFi driver with default buffers");
+        }
         /* Each configured slot carries its own Lua interpreter, and together
          * they can hold the heap the WiFi driver needs: with 5 slots the free
          * heap is down to ~28 kB and esp_wifi_init() cannot even get 3 static
@@ -877,12 +897,15 @@ static void wifi_coex_task(void *arg)
              * stalled HTTP sends came from the AP buffering frames for a
              * negotiated interval of 4 beacons (~0.4 s) against a 10 s send
              * timeout; that is now listen_interval 1 with a 30 s timeout. */
-            esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+            /* Not commissioned: no Thread to hand the gaps to, so sleeping
+             * between beacons only makes the AP buffer the dashboard's frames. */
+            esp_wifi_set_ps(s_coex_uncommissioned ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM);
             ESP_LOGW(TAG, "wifi_coex: STA-only connecting to '%s' (source: %s), %s",
                      ssid, from_compile_time ? "compile-time" : "NVS",
-                     s_coex_thread_down ? "Thread is down until the window closes"
-                                        : "Thread polls its parent meanwhile, so "
-                                          "mesh traffic is slower");
+                     s_coex_uncommissioned ? "not commissioned, WiFi has the radio"
+                     : s_coex_thread_down  ? "Thread is down until the window closes"
+                                           : "Thread polls its parent meanwhile, so "
+                                             "mesh traffic is slower");
 
             EventBits_t bits = xEventGroupWaitBits(s_wifi_evt,
                                                    WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,

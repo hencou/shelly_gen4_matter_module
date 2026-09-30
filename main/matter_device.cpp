@@ -1530,6 +1530,15 @@ extern "C" esp_err_t matter_thread_enabled_set(bool enabled)
 #endif
 }
 
+extern "C" bool matter_thread_is_enabled(void)
+{
+#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
+    return chip::DeviceLayer::ConnectivityMgr().IsThreadEnabled();
+#else
+    return false;
+#endif
+}
+
 extern "C" bool matter_is_commissioned(void)
 {
     chip::DeviceLayer::PlatformMgr().LockChipStack();
