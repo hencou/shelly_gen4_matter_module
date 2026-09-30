@@ -807,18 +807,13 @@ static void wifi_coex_task(void *arg)
 
     if (!s_coex_wifi_inited) {
         wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-        esp_err_t err = ESP_ERR_NO_MEM;
-        /* Without Thread traffic to share the radio with, the shrunken buffers
-         * only cost the dashboard: with 3 RX buffers and no block-ack a burst
-         * of TCP segments overruns the driver and every loss waits for a
-         * retransmit. Use the default sizes when the heap allows it. */
-        if (s_coex_uncommissioned) err = esp_wifi_init(&cfg);
-        if (err == ESP_ERR_NO_MEM) {
-            wifi_coex_shrink_buffers(&cfg);
-            err = esp_wifi_init(&cfg);
-        } else if (err == ESP_OK) {
-            ESP_LOGI(TAG, "wifi_coex: WiFi driver with default buffers");
-        }
+        /* Also before commissioning: the default set passes esp_wifi_init(),
+         * but its 32 dynamic RX/TX buffers are allocated under traffic and
+         * drain the heap BLE and Matter leave (free heap 412 bytes), after
+         * which the station can no longer send a probe, answer a ping or
+         * re-authenticate. */
+        wifi_coex_shrink_buffers(&cfg);
+        esp_err_t err = esp_wifi_init(&cfg);
         /* Each configured slot carries its own Lua interpreter, and together
          * they can hold the heap the WiFi driver needs: with 5 slots the free
          * heap is down to ~28 kB and esp_wifi_init() cannot even get 3 static
@@ -941,10 +936,15 @@ static void wifi_coex_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(WIFI_COEX_TICK_MS));
         if (s_coex_persistent) continue;
         int left = (int)((s_coex_deadline_us - esp_timer_get_time()) / 1000000);
-        if (left > 0 && left % 60 == 0 && left != last_logged) {
+        if (left > 0 && left % 10 == 0 && left != last_logged) {
             last_logged = left;
-            ESP_LOGI(TAG, "wifi_coex: %d s remaining (free heap %u, largest block %u)",
-                     left, (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+            wifi_ap_record_t ap = { 0 };
+            bool linked = esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+            ESP_LOGI(TAG, "wifi_coex: %d s remaining, sta %s rssi %d ch %d "
+                     "(free heap %u, largest block %u)",
+                     left, linked ? "linked" : "not linked", linked ? ap.rssi : 0,
+                     linked ? ap.primary : 0,
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
         }
     }

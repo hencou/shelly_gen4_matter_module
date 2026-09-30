@@ -12,6 +12,11 @@ the update over Matter OTA.
   be debugged over J6 when the dashboard is unreachable. The Add-on sensor tasks
   pause until the next reboot; SW polarity is untouched. The wall-switch and
   Add-on inputs keep their old 6× behavior (WiFi window only).
+- The WiFi window before commissioning keeps the reduced WiFi buffer set. With
+  the driver's default buffers the heap ran down to a few hundred bytes under
+  traffic: the station had an IP address but answered no ping, lost the AP
+  and could not re-authenticate. While the window is open the log now reports
+  link state, RSSI, channel and free heap every 10 s.
 - WiFi on a module that is **not commissioned yet** (fresh install, factory
   reset, Commission Mode) is usable again. Such a module advertises
   continuously over BLE for pairing, and BLE outranks WiFi in the radio
@@ -27,9 +32,7 @@ the update over Matter OTA.
 - The 10-minute WiFi window on a module that is **not commissioned yet** is
   reachable from the browser again. With no Thread traffic to share the radio
   with, the station now stays awake (no modem sleep, which made the AP buffer
-  every frame for the dashboard), the WiFi driver uses its default buffer sizes
-  when the heap allows it (the reduced set with 3 RX buffers and no block-ack
-  is still the fallback), and a Thread interface that is still up without a
+  every frame for the dashboard), and a Thread interface that is still up without a
   fabric is taken down for the window and brought back when it closes.
 - Restoring a backup that includes the NVS image no longer crashes the module.
   The decoded image is staged in the unused `fs_0` partition while it uploads

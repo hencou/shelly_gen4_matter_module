@@ -361,8 +361,7 @@ is kept and takes effect again after commissioning). Commission the device
 first, then switch WiFi to Always on.
 
 With no Thread network to share the radio with, the window before
-commissioning also keeps the WiFi station awake (no modem sleep), uses the
-WiFi driver's default buffer sizes when enough heap is free, and takes a
+commissioning also keeps the WiFi station awake (no modem sleep) and takes a
 Thread interface that is still up without a fabric down until the window
 closes.
 
