@@ -7,6 +7,11 @@ the update over Matter OTA.
 
 ## 1.6.7 — 2026-09-08
 
+- **6× on the PCB button** also restores the UART0 serial console on GPIO16/17
+  immediately, without a reboot and without bench mode, so the WiFi window can
+  be debugged over J6 when the dashboard is unreachable. The Add-on sensor tasks
+  pause until the next reboot; SW polarity is untouched. The wall-switch and
+  Add-on inputs keep their old 6× behavior (WiFi window only).
 - WiFi on a module that is **not commissioned yet** (fresh install, factory
   reset, Commission Mode) is usable again. Such a module advertises
   continuously over BLE for pairing, and BLE outranks WiFi in the radio

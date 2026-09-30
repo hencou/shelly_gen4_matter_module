@@ -31,6 +31,13 @@ const char *sensors_temp_error(void);
  * blocks for roughly a second. Returns the number of bytes written. */
 size_t sensors_ow_probe(char *out, size_t out_size);
 
+/* True while the Add-on sensor tasks own GPIO16/17, so the UART0 console is off. */
+bool sensors_own_uart0_pins(void);
+
+/* Park the Add-on sensor tasks and hand GPIO16/17 back to the UART0 console
+ * until the next reboot. No-op when the sensor tasks never took the pins. */
+void sensors_release_uart0(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -328,6 +328,10 @@ The **WiFi** buttons on the dashboard (**WiFi & OTA** tab) join WiFi as a
 
 The physical shortcut does exactly the same: **press any button 6× rapidly**
 (within 2.5 seconds). Use that when the dashboard is unreachable over Thread.
+6× on the **PCB button** additionally hands GPIO16/17 back to the UART0 console
+right away (no reboot), so the serial log on J6 shows the WiFi window even when
+bench mode is off. The Add-on sensors (DS18B20, Analog IN) pause until the next
+reboot; the SW polarity is not changed. Only do this with the Add-on removed.
 
 **Apply** on that tab only stores SSID, password, hostname and firmware URL — no
 reboot. The next window uses them, so a wrong SSID costs a toggle instead of a
@@ -617,6 +621,10 @@ Controls GPIO10 polarity and sensor initialization. Configurable at runtime via 
 |---|---|---|---|
 | **0** | Active-high (230V optocoupler) | Active | Production |
 | **1** (default) | Active-low + pull-up | Skipped (UART0 stays active) | Development |
+
+To get the serial log without switching bench mode (for example when the
+dashboard cannot be reached), press the **PCB button 6×**: UART0 comes back
+immediately and stays until the next reboot, see [Switch to WiFi for faster management](#switch-to-wifi-for-faster-management).
 
 ## Build + flash
 
