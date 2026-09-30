@@ -5,6 +5,16 @@ every version are on the [Releases page](https://github.com/hencou/shelly_gen4_m
 The Matter `SoftwareVersion` is bumped with every release so controllers offer
 the update over Matter OTA.
 
+## 1.6.9 — 2026-09-10
+
+- The 10-minute WiFi window on a module that is **not commissioned yet** is
+  reachable from the browser again. With no Thread traffic to share the radio
+  with, the station now stays awake (no modem sleep, which made the AP buffer
+  every frame for the dashboard), the WiFi driver uses its default buffer sizes
+  when the heap allows it (the reduced set with 3 RX buffers and no block-ack
+  is still the fallback), and a Thread interface that is still up without a
+  fabric is taken down for the window and brought back when it closes.
+
 ## 1.6.8 — 2026-09-09
 
 - WiFi on a module that is **not commissioned yet** (fresh install, factory
