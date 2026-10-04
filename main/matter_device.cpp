@@ -1567,7 +1567,9 @@ extern "C" esp_err_t matter_ble_release(uint32_t timeout_ms)
 #if CONFIG_ENABLE_CHIPOBLE
     size_t before = heap_caps_get_free_size(MALLOC_CAP_8BIT);
     chip::DeviceLayer::PlatformMgr().LockChipStack();
-    chip::DeviceLayer::PlatformMgr().AddEventHandler(ble_deinit_handler, 0);
+    CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().AddEventHandler(ble_deinit_handler, 0);
+    if (err != CHIP_NO_ERROR)
+        ESP_LOGE(TAG, "BLE deinit handler not registered: %" CHIP_ERROR_FORMAT, err.Format());
     chip::DeviceLayer::Internal::BLEMgr().Shutdown();
     chip::DeviceLayer::PlatformMgr().UnlockChipStack();
     for (uint32_t waited = 0; !s_ble_released && waited < timeout_ms; waited += 100)
