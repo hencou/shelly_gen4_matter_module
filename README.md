@@ -192,14 +192,23 @@ sensor and a temperature probe are in [SCRIPTS.md](SCRIPTS.md).
 There are two ways to install the firmware for the first time.
 
 **Option A — from the stock Shelly web UI (no UART, no opening the device):**
-- Download a precompiled `shelly-gen4-matter-module-v<version>-ota.zip` from the Releases page: 
+- Download the precompiled `shelly-gen4-matter-module-<model>-v<version>-ota.zip`
+  **for your model** (`1-gen4`, `1-mini-gen4`, `1pm-gen4` or `2pm-gen4`) from the Releases page:
 https://github.com/hencou/shelly_gen4_matter_module/releases
 
-- Or build the web-UI zip package from source:
+- Or build the web-UI zip packages from source:
 ```bash
 idf.py build
-python3 tools/make-webui-ota-zip.py     # → shelly-gen4-matter-module-v<version>-ota.zip
+python3 tools/make-webui-ota-zip.py     # → shelly-gen4-matter-module-<model>-v<version>-ota.zip, one per model
+python3 tools/make-webui-ota-zip.py --model 1-mini-gen4   # only one model
 ```
+
+The firmware inside is the same for every model; only the manifest differs. The
+stock updater installs an unsigned package only when its manifest name is the
+module's own Shelly app code (`S1G4`, `Mini1G4`, `S1PMG4`, `S2PMG4`). A package
+for another model fails with `Signature verification of manifest for S1G4
+failed`. Verified on a Shelly 1 Gen4 running stock 2.0.1. After the install,
+select the model under **Hardware → Device Type** on the management dashboard.
 
 - Upload it through the stock Shelly device page:
 (**Settings → Firmware**, "install from file"):
