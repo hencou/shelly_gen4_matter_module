@@ -7,6 +7,13 @@ the update over Matter OTA.
 
 ## 1.6.7 — 2026-09-08
 
+- **Web-UI install package per model.** `tools/make-webui-ota-zip.py` now
+  writes one zip per model (`1-gen4`, `1-mini-gen4`, `1pm-gen4`, `2pm-gen4`)
+  with that model's Shelly app code (`S1G4`, `Mini1G4`, `S1PMG4`, `S2PMG4`) as
+  manifest name. The single package always said `S1G4`, which the stock
+  updater on the other models rejected with `Signature verification of
+  manifest for S1G4 failed`
+  ([#257](https://github.com/hencou/shelly_gen4_matter_module/issues/257)).
 - **6× on the PCB button** also restores the UART0 serial console on GPIO16/17
   immediately, without a reboot and without bench mode, so the WiFi window can
   be debugged over J6 when the dashboard is unreachable. The Add-on sensor tasks

@@ -94,7 +94,9 @@ The Shelly 1 Gen4 has **7 holes in a row** on the back — this is the **J6 conn
 
 > **UART is no longer the only install route.** You can now install straight
 > from the stock Shelly web UI with the package built by
-> `tools/make-webui-ota-zip.py` — see the README's
+> `tools/make-webui-ota-zip.py` (one zip per model — use the one for your
+> model, otherwise the stock updater rejects it with "Signature verification of
+> manifest ... failed") — see the README's
 > [Firmware updates](README.md#firmware-updates) section. That is the only way
 > to flash a **Shelly 1 Mini Gen4** (no accessible UART pads). UART flashing
 > below is still recommended when you want to make a full 8 MB backup for a
