@@ -110,8 +110,8 @@ pull-up), and the wall-switch inputs **active-high** in normal operation (see
 > without opening it. The Mini has **no** Shelly Plus Add-on connector, so the
 > add-on inputs are unavailable on it.
 
-> ⚠️ **Test status:** only the **Shelly 1 Gen4** has been verified on real
-> hardware. The other three profiles match the stock firmware pin-for-pin but
+> ⚠️ **Test status:** only the **Shelly 1 Gen4** and **Shelly 1 Gen4 mini** has been verified on real
+> hardware. The other profiles match the stock firmware pin-for-pin but
 > have **not** been hardware-tested. The BL0942 and ADE7953 scaling constants
 > are placeholders and **must** be calibrated against a known load on real
 > hardware before the reported voltage/current/power values are trustworthy.
