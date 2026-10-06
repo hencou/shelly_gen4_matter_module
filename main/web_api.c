@@ -14,6 +14,7 @@
 #include "ade7953.h"
 #include "relay.h"
 #include "chip_temp.h"
+#include "board_temp.h"
 #include "sensors.h"
 #include "log_buffer.h"
 #include "script_engine.h"
@@ -128,7 +129,7 @@ static const char *reset_reason_str(esp_reset_reason_t r)
 
 static esp_err_t api_hardware_get(httpd_req_t *req)
 {
-    static char json[1536];
+    static char json[1792];
     int pos = 0;
 
     const esp_app_desc_t *app = esp_app_get_description();
@@ -176,6 +177,20 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
     const char *rst = reset_reason_str(esp_reset_reason());
 
     const hw_profile_t *hw = hw_profile();
+
+    char btemp_str[64];
+    {
+        float t;
+        if (hw->ntc_gpio < 0) {
+            snprintf(btemp_str, sizeof(btemp_str), "N/A (no NTC)");
+        } else if (!board_temp_read(&t)) {
+            snprintf(btemp_str, sizeof(btemp_str), "not read (GPIO%d)", hw->ntc_gpio);
+        } else if (board_temp_overheated()) {
+            snprintf(btemp_str, sizeof(btemp_str), "%.1f C (OVERHEAT, relays switched off)", t);
+        } else {
+            snprintf(btemp_str, sizeof(btemp_str), "%.1f C", t);
+        }
+    }
 
     int btn_level = gpio_get_level(hw->switch_gpio);
     int btn_active = g_bench_mode ? !btn_level : btn_level;
@@ -292,6 +307,7 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
         "\"uptime\":\"%dh %02dm %02ds\","
         "\"free_heap\":\"%lu bytes (largest block %lu, min ever %lu)\","
         "\"chip_temp\":\"%s\","
+        "\"board_temp\":\"%s\","
         "\"reset_reason\":\"%s\","
         "\"bench_mode\":\"%s\","
         "\"srp_mode\":\"%s\","
@@ -314,6 +330,7 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
         up_h, up_m, up_ss,
         (unsigned long)heap, (unsigned long)heap_max, (unsigned long)heap_min,
         ctemp_str,
+        btemp_str,
         rst,
         g_bench_mode ? "ON" : "OFF",
         ota_srp_mode_get() ? "ON" : "OFF",

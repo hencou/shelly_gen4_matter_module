@@ -56,6 +56,7 @@ typedef struct {
     int pm_i2c_sda;          /* ADE7953 I2C SDA (PM_ADE7953) */
     int pm_i2c_scl;          /* ADE7953 I2C SCL (PM_ADE7953) */
     int pm_i2c_irq;          /* ADE7953 IRQ (-1 = unused) */
+    int ntc_gpio;            /* onboard NTC ADC pin (-1 = none) */
 } hw_profile_t;
 
 /* Load the active device type from NVS and select the matching profile.

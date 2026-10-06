@@ -89,12 +89,12 @@ the model on the management dashboard (**Hardware → Device Type**); the choice
 stored in NVS and applied on the next boot. The correct GPIO mapping is then used
 for the relay(s), wall-switch input(s), onboard button and status LED.
 
-| Model | Relay | Switch | Button | Status LED | Add-on (Digital IN) | Power meter |
-|---|---|---|---|---|---|---|
-| **Shelly 1 Gen4** (default) | GPIO5 | GPIO10 | GPIO4 | GPIO15 | yes (GPIO18) | — |
-| **Shelly 1 Mini Gen4** | GPIO10 | GPIO12 | GPIO22 | GPIO5 | — | — |
-| **Shelly 1PM Gen4** | GPIO4 | GPIO10 | GPIO1 | GPIO11 | yes (GPIO12) | BL0942 (UART1 GPIO7 + GPIO6, 9600 baud) |
-| **Shelly 2PM Gen4** | GPIO5 + GPIO3 | GPIO11 + GPIO10 | GPIO12 | GPIO18 | yes (GPIO1) | ADE7953 dual-channel (IRQ=GPIO19, I2C SDA=GPIO6 SCL=GPIO7) |
+| Model | Relay | Switch | Button | Status LED | Add-on (Digital IN) | Power meter | Board NTC |
+|---|---|---|---|---|---|---|---|
+| **Shelly 1 Gen4** (default) | GPIO5 | GPIO10 | GPIO4 | GPIO15 | yes (GPIO18) | — | — |
+| **Shelly 1 Mini Gen4** | GPIO10 | GPIO12 | GPIO22 | GPIO5 | — | — | GPIO4 |
+| **Shelly 1PM Gen4** | GPIO4 | GPIO10 | GPIO1 | GPIO11 | yes (GPIO12) | BL0942 (UART1 GPIO7 + GPIO6, 9600 baud) | GPIO3 |
+| **Shelly 2PM Gen4** | GPIO5 + GPIO3 | GPIO11 + GPIO10 | GPIO12 | GPIO18 | yes (GPIO1) | ADE7953 dual-channel (IRQ=GPIO19, I2C SDA=GPIO6 SCL=GPIO7) | GPIO4 |
 
 See [STOCK_GPIO.md](STOCK_GPIO.md) for the evidence per field. The Add-on Analog IN
 (GPIO17) and 1-Wire (GPIO16 in / GPIO9 out) are identical on every model; only
@@ -136,6 +136,12 @@ Notes:
   B = relay 2). Each channel is exposed as its own **Electrical Power
   Measurement** endpoint. The two relays are two OnOff Light endpoints and both
   wall-switch inputs are reported to scripts (see the Lua section).
+- The **1 Mini, 1PM and 2PM Gen4** have an onboard **NTC** (10 kΩ divider,
+  B ≈ 3350), read every 10 s and shown on the Hardware tab as *Board temperature
+  (NTC)* and in Lua as `input.board_temperature()`. Above **95 °C** on two
+  consecutive readings while a relay is on, every relay switches off
+  (overheat protection). The 1 Gen4 has no NTC; its *Chip temperature* is the
+  ESP32-C6 die sensor.
 
 | Component | Details |
 |---|---|
@@ -518,6 +524,7 @@ factory-fresh stock unit and has to be set up again from scratch.
 | `input.analog()` | integer | Analog IN duty cycle 0–100 % (GPIO17) |
 | `input.temperature()` | number | DS18B20 (Add-on) temperature in °C |
 | `input.chip_temperature()` | number or nil | ESP32-C6 internal temperature in °C (all models) |
+| `input.board_temperature()` | number or nil | Onboard NTC temperature in °C (1 Mini, 1PM, 2PM; `nil` on the 1 Gen4) |
 
 ### Button events
 

@@ -23,6 +23,7 @@ extern "C" {
 #include "sensors.h"
 #include "power_meter.h"
 #include "ade7953.h"
+#include "board_temp.h"
 #include "ota.h"
 #include "shelly_boot.h"
 #include "loader_migrate.h"
@@ -405,6 +406,8 @@ extern "C" void app_main(void)
                      hw_profile()->pm_i2c_irq, on_power_ade);
         ESP_LOGI(TAG, "BOOT-STEP: ade7953_init done");
     }
+
+    board_temp_init();
 
     if (commissioned) {
         status_led_set(STATUS_LED_HEARTBEAT);

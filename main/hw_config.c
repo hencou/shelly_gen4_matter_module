@@ -15,6 +15,7 @@
  *                 |        |             | GPIO7 + GPIO6        | IRQ=GPIO19
  *   Add-on        | yes    | no          | yes                  | yes
  *   Add-on Dig IN | GPIO18 | -           | GPIO12               | GPIO1
+ *   Board NTC     | -      | GPIO4       | GPIO3                | GPIO4
  *
  * Only the Mini lacks the Shelly Plus Add-on connector (its firmware carries
  * no 1-Wire/DHT code at all); the other three expose it. Analog IN (GPIO17)
@@ -45,6 +46,7 @@ static const hw_profile_t s_profiles[HW_TYPE_COUNT] = {
         .has_pm = false, .pm_type = PM_NONE,
         .pm_uart_tx = -1, .pm_uart_rx = -1,
         .pm_i2c_sda = -1, .pm_i2c_scl = -1, .pm_i2c_irq = -1,
+        .ntc_gpio = -1,
     },
     [HW_1_MINI_GEN4] = {
         .type = HW_1_MINI_GEN4, .name = "Shelly 1 Mini Gen4",
@@ -55,6 +57,7 @@ static const hw_profile_t s_profiles[HW_TYPE_COUNT] = {
         .has_pm = false, .pm_type = PM_NONE,
         .pm_uart_tx = -1, .pm_uart_rx = -1,
         .pm_i2c_sda = -1, .pm_i2c_scl = -1, .pm_i2c_irq = -1,
+        .ntc_gpio = 4,
     },
     [HW_1PM_GEN4] = {
         .type = HW_1PM_GEN4, .name = "Shelly 1PM Gen4",
@@ -65,6 +68,7 @@ static const hw_profile_t s_profiles[HW_TYPE_COUNT] = {
         .has_pm = true, .pm_type = PM_BL0942,
         .pm_uart_tx = 6, .pm_uart_rx = 7,
         .pm_i2c_sda = -1, .pm_i2c_scl = -1, .pm_i2c_irq = -1,
+        .ntc_gpio = 3,
     },
     [HW_2PM_GEN4] = {
         /* Relays GPIO5/GPIO3 and switches GPIO11/GPIO10 per the per-model pin
@@ -79,6 +83,7 @@ static const hw_profile_t s_profiles[HW_TYPE_COUNT] = {
         .has_pm = true, .pm_type = PM_ADE7953,
         .pm_uart_tx = -1, .pm_uart_rx = -1,
         .pm_i2c_sda = 6, .pm_i2c_scl = 7, .pm_i2c_irq = 19,
+        .ntc_gpio = 4,
     },
 };
 
@@ -100,9 +105,10 @@ void hw_config_init(void)
     }
     if (v >= HW_TYPE_COUNT) v = HW_1_GEN4;
     s_active = &s_profiles[v];
-    ESP_LOGI(TAG, "device type = %d (%s): relay=GPIO%d switch=GPIO%d button=GPIO%d led=GPIO%d addon=%d pm=%d",
+    ESP_LOGI(TAG, "device type = %d (%s): relay=GPIO%d switch=GPIO%d button=GPIO%d led=GPIO%d addon=%d pm=%d ntc=GPIO%d",
              s_active->type, s_active->name, s_active->relay_gpio, s_active->switch_gpio,
-             s_active->button_gpio, s_active->led_gpio, s_active->has_addon, s_active->has_pm);
+             s_active->button_gpio, s_active->led_gpio, s_active->has_addon, s_active->has_pm,
+             s_active->ntc_gpio);
 }
 
 const hw_profile_t *hw_profile(void)

@@ -223,6 +223,11 @@ function run()
 end
 ```
 
+The 1 Mini, 1PM and 2PM Gen4 also have an **NTC on the board** (near the relay),
+read with `input.board_temperature()`. It returns `nil` on the 1 Gen4, which has
+no NTC. Independently of any script, the firmware switches every relay off when
+this NTC reads above 95 °C on two consecutive 10 s readings while a relay is on.
+
 ---
 
 ## 7. Occupancy sensor (analog IN)
@@ -593,6 +598,7 @@ end
 - `input.analog()` → integer (0–100 %)
 - `input.temperature()` → number (°C, DS18B20 Add-on)
 - `input.chip_temperature()` → number or nil (°C, ESP32-C6 internal sensor)
+- `input.board_temperature()` → number or nil (°C, onboard NTC on the 1 Mini, 1PM and 2PM; `nil` on the 1 Gen4)
 
 ### Output
 Relay functions take an optional 1-based channel (`1`=relay 1, `2`=relay 2 on the
