@@ -7,6 +7,13 @@ the update over Matter OTA.
 
 ## 1.6.7 — 2026-09-08
 
+- **Board temperature (NTC) and overheat protection.** The 1 Mini, 1PM and 2PM
+  Gen4 read their onboard NTC (GPIO4, GPIO3 and GPIO4; the 1 Gen4 has none)
+  every 10 s. The value is shown on the Hardware tab as *Board temperature
+  (NTC)* and available in Lua as `input.board_temperature()`. Above 95 °C on two
+  consecutive readings while a relay is on, every relay is switched off and
+  Matter reports the new state; the Hardware tab shows `OVERHEAT` until the
+  board has cooled below 85 °C.
 - **Web-UI install package per model.** `tools/make-webui-ota-zip.py` now
   writes one zip per model (`1-gen4`, `1-mini-gen4`, `1pm-gen4`, `2pm-gen4`)
   with that model's Shelly app code (`S1G4`, `Mini1G4`, `S1PMG4`, `S2PMG4`) as

@@ -19,6 +19,7 @@
 #include "sensors.h"
 #include "matter_device.h"
 #include "chip_temp.h"
+#include "board_temp.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -209,6 +210,17 @@ static int l_input_chip_temperature(lua_State *L)
     return 1;
 }
 
+static int l_input_board_temperature(lua_State *L)
+{
+    float t;
+    if (board_temp_read(&t)) {
+        lua_pushnumber(L, t);
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
 static int l_input_button_event(lua_State *L)
 {
     if (!s_btn_event_pending) {
@@ -243,6 +255,7 @@ static const luaL_Reg input_lib[] = {
     {"device_btn",   l_input_device_btn},
     {"temperature",  l_input_temperature},
     {"chip_temperature", l_input_chip_temperature},
+    {"board_temperature", l_input_board_temperature},
     {"button_event", l_input_button_event},
     {"button_id",    l_input_button_id},
     {NULL, NULL}
