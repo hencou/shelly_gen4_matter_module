@@ -31,6 +31,8 @@ static const char MGMT_HTML[] =
 "th{background:#f0f0f0}.hw-val{font-family:monospace;font-size:1.1em}"
 "h4{margin:1.2em 0 .3em;color:#333;border-bottom:1px solid #ddd;padding-bottom:.2em}"
 ".info{font-size:.85em;color:#555;margin-bottom:.8em}"
+".fpk{display:inline-block;font-weight:normal}.fpk input{display:none}"
+".fpn{font-size:.9em;color:#555;margin-right:.6em}"
 "</style></head><body>"
 
 "<h2 id=page-title>Shelly1Gen4 Management</h2>"
@@ -87,8 +89,8 @@ static const char MGMT_HTML[] =
 "<p class=info>Or fetch the firmware URL above directly — that needs a route to "
 "the server, so open the WiFi window first unless it is reachable over Thread. "
 "<button class='btn btn-blue' onclick=doOtaUrl()>Update from URL</button></p>"
-"<label for=binfile>Select .bin file</label>"
-"<input type=file id=binfile accept='.bin'>"
+"<label>Select .bin file</label>"
+"<label class='btn btn-gray fpk'>Choose file<input type=file id=binfile accept='.bin' onchange=fpName(this)></label><span id=binfile-n class=fpn>No file chosen</span>"
 "<button class='btn btn-blue' id=flashbtn onclick=doUpload()>Flash Firmware</button>"
 "<div id=bar-wrap><div id=bar></div></div>"
 "<div id=bar-lbl></div>"
@@ -252,7 +254,7 @@ static const char MGMT_HTML[] =
 "Include NVS (Matter commissioning data)</label></div>"
 "<button class='btn btn-blue' onclick=doBackup()>Download Backup</button>"
 "<h3>Restore from file</h3>"
-"<input type=file id=restfile accept='.json'>"
+"<label class='btn btn-gray fpk'>Choose file<input type=file id=restfile accept='.json' onchange=fpName(this)></label><span id=restfile-n class=fpn>No file chosen</span>"
 "<button class='btn btn-green' onclick=doRestore()>Restore Backup</button>"
 "<div id=bk-msg class=msg></div>"
 
@@ -271,7 +273,7 @@ static const char MGMT_HTML[] =
 "<button class='btn btn-blue' id=stockfindbtn onclick=findStockFw()>"
 "Find latest stock firmware</button>"
 "<div id=stockfw-msg class=msg></div>"
-"<input type=file id=stockfile accept='.zip'>"
+"<label class='btn btn-gray fpk'>Choose file<input type=file id=stockfile accept='.zip' onchange=fpName(this)></label><span id=stockfile-n class=fpn>No file chosen</span>"
 "<button class='btn btn-red' id=stockbtn onclick=doRestoreStock()>"
 "Flash stock firmware</button>"
 "<div id=stock-bar-wrap style='display:none'><div id=stock-bar></div></div>"
@@ -291,6 +293,8 @@ static const char MGMT_HTML[] =
 "</div>"
 
 "<script>"
+"function fpName(i){document.getElementById(i.id+'-n').textContent="
+"  i.files.length?i.files[0].name:'No file chosen';}"
 /* Tab switching */
 "function showTab(n){"
 "  document.querySelectorAll('.tab').forEach(function(t,i){t.className=i==n?'tab act':'tab'});"
