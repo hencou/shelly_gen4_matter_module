@@ -71,7 +71,7 @@ static IRAM_ATTR void slot_remove(unsigned i)
     s_tab[i].ptr = 0;
 }
 
-IRAM_ATTR void esp_heap_trace_alloc_hook(void *ptr, size_t size, uint32_t caps)
+void esp_heap_trace_alloc_hook(void *ptr, size_t size, uint32_t caps)
 {
     if (!s_active || !ptr) return;
     portENTER_CRITICAL_SAFE(&s_mux);
@@ -91,7 +91,7 @@ IRAM_ATTR void esp_heap_trace_alloc_hook(void *ptr, size_t size, uint32_t caps)
     portEXIT_CRITICAL_SAFE(&s_mux);
 }
 
-IRAM_ATTR void esp_heap_trace_free_hook(void *ptr)
+void esp_heap_trace_free_hook(void *ptr)
 {
     if (!s_active || !ptr) return;
     portENTER_CRITICAL_SAFE(&s_mux);
