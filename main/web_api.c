@@ -1290,12 +1290,6 @@ void web_api_start_httpd(void)
      * lwIP has CONFIG_LWIP_MAX_SOCKETS (10) in total and Matter/Thread need
      * several UDP sockets of that, so the listener stays modest. */
     hc.lru_purge_enable   = true;
-    /* lwIP keeps a closed socket's unsent/unacked data and retransmits it up
-     * to CONFIG_LWIP_TCP_MAXRTX times; over the shared radio that holds ~3 kB
-     * per purged connection for minutes and drains the heap. Give the data
-     * 1 s to leave, then reset the connection so its buffers are freed. */
-    hc.enable_so_linger   = true;
-    hc.linger_timeout     = 1;
     /* Each connection can queue TCP_SND_BUF (2880 bytes) of unacked data on
      * top of the WiFi TX copies; three keep that within the heap left next to
      * Matter and Thread. LRU purge recycles the oldest for the browser. */
