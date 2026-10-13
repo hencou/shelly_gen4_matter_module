@@ -751,12 +751,18 @@ static esp_err_t wifi_coex_start_ap(void)
  * esp_wifi_init() returns ESP_ERR_NO_MEM, so the window never opens. These
  * counts cost throughput, not reachability, which is the right trade for a
  * dashboard. Block acknowledgement goes off with them: an AMPDU window needs
- * its own reorder buffers, and rx_ba_win has to be 0 when AMPDU RX is off. */
+ * its own reorder buffers, and rx_ba_win has to be 0 when AMPDU RX is off.
+ * The dynamic buffers are allocated per frame while a client is connected and
+ * held as long as the shared radio needs to get them out (TX) or lwIP holds the
+ * received data (RX): 8 + 8 of ~1.6 kB is ~26 kB, more than the ~22 kB a
+ * commissioned node has left, so a browser on the SoftAP drained the heap to
+ * 3 kB and took Matter (PacketBuffer pool EMPTY) and Thread HTTP down with it.
+ * 4 + 4 caps that at ~13 kB; a full TX queue makes TCP retransmit later. */
 static void wifi_coex_shrink_buffers(wifi_init_config_t *cfg)
 {
     cfg->static_rx_buf_num  = 3;
-    cfg->dynamic_rx_buf_num = 8;
-    cfg->dynamic_tx_buf_num = 8;
+    cfg->dynamic_rx_buf_num = 4;
+    cfg->dynamic_tx_buf_num = 4;
     cfg->rx_mgmt_buf_num    = 5;
     cfg->mgmt_sbuf_num      = 6;
     cfg->ampdu_rx_enable    = 0;
