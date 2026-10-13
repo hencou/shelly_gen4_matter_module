@@ -366,6 +366,7 @@ static bool load_sta_credentials(char *ssid, size_t ssidlen,
 #define WIFI_COEX_WINDOW_US    (10ULL * 60 * 1000 * 1000)   /* 10 minutes */
 #define WIFI_COEX_CONNECT_MS   60000                        /* give up if never up */
 #define WIFI_COEX_TICK_MS      1000
+#define WIFI_COEX_PERSISTENT_LOG_US (60LL * 1000 * 1000)
 /* Parent poll period while WiFi shares the radio. Everything addressed to the
  * node waits at its parent until the next poll, so this is the latency Matter
  * and the dashboard over Thread see during the window; 1 s keeps them usable
@@ -764,6 +765,21 @@ static void wifi_coex_shrink_buffers(wifi_init_config_t *cfg)
     cfg->rx_ba_win          = 0;
 }
 
+static void wifi_coex_log_link(const char *phase)
+{
+    wifi_ap_record_t ap = { 0 };
+    wifi_sta_list_t clients = { 0 };
+    bool linked = esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+    bool ap_up = esp_wifi_ap_get_sta_list(&clients) == ESP_OK;
+    ESP_LOGI(TAG, "wifi_coex: %s, sta %s rssi %d ch %d, softap clients %d "
+             "(free heap %u, largest block %u, lowest %u)",
+             phase, linked ? "linked" : "not linked", linked ? ap.rssi : 0,
+             linked ? ap.primary : 0, ap_up ? clients.num : -1,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
+}
+
 static void wifi_coex_task(void *arg)
 {
     (void)arg;
@@ -937,20 +953,22 @@ static void wifi_coex_task(void *arg)
     }
 
     int last_logged = -1;
+    int64_t next_persistent_log_us = 0;
     while (wifi_coex_open()) {
         vTaskDelay(pdMS_TO_TICKS(WIFI_COEX_TICK_MS));
-        if (s_coex_persistent) continue;
+        if (s_coex_persistent) {
+            int64_t now = esp_timer_get_time();
+            if (now < next_persistent_log_us) continue;
+            next_persistent_log_us = now + WIFI_COEX_PERSISTENT_LOG_US;
+            wifi_coex_log_link("always on");
+            continue;
+        }
         int left = (int)((s_coex_deadline_us - esp_timer_get_time()) / 1000000);
         if (left > 0 && left % 10 == 0 && left != last_logged) {
             last_logged = left;
-            wifi_ap_record_t ap = { 0 };
-            bool linked = esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
-            ESP_LOGI(TAG, "wifi_coex: %d s remaining, sta %s rssi %d ch %d "
-                     "(free heap %u, largest block %u)",
-                     left, linked ? "linked" : "not linked", linked ? ap.rssi : 0,
-                     linked ? ap.primary : 0,
-                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+            char phase[24];
+            snprintf(phase, sizeof(phase), "%d s remaining", left);
+            wifi_coex_log_link(phase);
         }
     }
 

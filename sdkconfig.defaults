@@ -41,6 +41,10 @@ CONFIG_OPENTHREAD_CUSTOM_HEADER_PATH="main"
 CONFIG_OPENTHREAD_CUSTOM_HEADER_FILE_NAME="openthread_custom_config.h"
 # LwIP
 CONFIG_LWIP_IPV6_NUM_ADDRESSES=12
+# Per-socket TCP send queue of 2 segments: while WiFi shares the radio with
+# Thread the queue drains slowly, and 4 browser connections with full queues
+# would take the heap that Matter and the WiFi driver need.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2880
 CONFIG_LWIP_MULTICAST_PING=y
 CONFIG_LWIP_NETIF_STATUS_CALLBACK=y
 # IPv6 route hook (main/thread_ip6_route.c): Thread multicast/ULA stays on the
