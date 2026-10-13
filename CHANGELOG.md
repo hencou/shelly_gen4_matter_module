@@ -5,37 +5,28 @@ every version are on the [Releases page](https://github.com/hencou/shelly_gen4_m
 The Matter `SoftwareVersion` is bumped with every release so controllers offer
 the update over Matter OTA.
 
-## 1.6.7 — 2026-09-08
+## 1.6.8 — 2026-10-13
 
-- **WiFi next to Thread: more heap for a SoftAP client.** A per-task heap
-  trace showed no leak: the dashboard's parallel requests and TCP connections
-  (10–17 kB), incoming Thread packets (5–7 kB) and the WiFi driver (3.5 kB)
-  together needed more than the ~17 kB a commissioned node has left with WiFi
-  on. The dashboard now sends one request at a time and skips a poll while a
-  request is pending or the tab is hidden, the web server keeps at most 2
-  connections with a 1 kB request-header buffer, and OpenThread uses 64
-  message buffers instead of 128 (~8 kB more heap).
-- **WiFi next to Thread: the WiFi driver no longer takes the whole heap.** With
-  a browser on the SoftAP the driver's per-frame RX/TX buffers (8 + 8 of
-  ~1.6 kB) took more than the ~22 kB a commissioned node has left, so the free
-  heap dropped to ~3 kB, the page stopped loading over WiFi and Thread and Matter
-  logged `PacketBuffer: pool EMPTY`. The WiFi window now uses 4 + 4 dynamic
-  buffers and the web server keeps at most 3 connections open.
-- **WiFi next to Thread: closed HTTP connections no longer hold the heap.**
-  lwIP kept the unsent data of every connection the web server closed and
-  retransmitted it for minutes over the shared radio, so the free heap drained
-  to ~3 kB until the page stopped loading over WiFi and Thread and only a
-  restart helped. A closed connection now gets 1 s to flush, then it is reset
-  and its buffers are freed (`SO_LINGER`).
-- **WiFi next to Thread: smaller TCP send queue per connection.** Each socket
-  now queues at most 2 segments (2880 bytes) instead of 4. While WiFi shares
-  the radio with Thread the queues drain slowly; with the dashboard and its API
-  calls open in parallel the copied segments took the heap Matter and the WiFi
-  driver need, so the page stopped half-way (`httpd_sock_err: error in send :
-  11`) and Matter logged `PacketBuffer: pool EMPTY`.
-- The WiFi window log line (`wifi_coex: …`) now also shows the number of SoftAP
-  clients and the lowest free heap since boot, and is logged every 60 s in
-  *Always on* mode as well.
+- **WiFi next to Thread: the dashboard loads and Thread stays reachable.** With
+  a browser on the SoftAP (or STA) of a commissioned module the free heap ran
+  down to ~1 kB, after which the page stopped loading over WiFi and Thread,
+  Matter logged `PacketBuffer: pool EMPTY` and the web server `error in send :
+  11`. A per-task heap trace showed no leak but too little headroom: the
+  dashboard's parallel requests and TCP connections, incoming Thread packets
+  and the WiFi driver together needed more than the ~17 kB that was left. Now:
+  - the dashboard sends one request at a time and skips a poll while a request
+    is pending or the tab is hidden;
+  - the web server keeps at most 2 connections with a 1 kB request-header
+    buffer, and each TCP socket queues at most 2 segments (2880 bytes);
+  - OpenThread uses 64 message buffers instead of 128 (~8 kB more heap);
+  - the WiFi window uses 4 + 4 dynamic WiFi RX/TX buffers.
+
+  A commissioned module now has ~27 kB free with WiFi on and stays above
+  ~7 kB with the dashboard open. Opening the dashboard over Thread and WiFi at
+  the same time can still stall one of them.
+- The WiFi window log line (`wifi_coex: …`) now shows the number of SoftAP
+  clients, the lowest free heap since boot and the open TCP connections, and is
+  logged once a minute, in *Always on* mode as well.
 - **Board temperature (NTC) and overheat protection.** The 1 Mini, 1PM and 2PM
   Gen4 read their onboard NTC (GPIO4, GPIO3 and GPIO4; the 1 Gen4 has none)
   every 10 s. The value is shown on the Hardware tab as *Board temperature
@@ -43,6 +34,9 @@ the update over Matter OTA.
   consecutive readings while a relay is on, every relay is switched off and
   Matter reports the new state; the Hardware tab shows `OVERHEAT` until the
   board has cooled below 85 °C.
+
+## 1.6.7 — 2026-09-08
+
 - **Web-UI install package per model.** `tools/make-webui-ota-zip.py` now
   writes one zip per model (`1-gen4`, `1-mini-gen4`, `1pm-gen4`, `2pm-gen4`)
   with that model's Shelly app code (`S1G4`, `Mini1G4`, `S1PMG4`, `S2PMG4`) as

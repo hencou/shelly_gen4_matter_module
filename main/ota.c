@@ -22,7 +22,6 @@
 #include "sensors.h"
 #include "status_led.h"
 #include "script_engine.h"
-#include "heap_track.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -369,8 +368,7 @@ static bool load_sta_credentials(char *ssid, size_t ssidlen,
 #define WIFI_COEX_WINDOW_US    (10ULL * 60 * 1000 * 1000)   /* 10 minutes */
 #define WIFI_COEX_CONNECT_MS   60000                        /* give up if never up */
 #define WIFI_COEX_TICK_MS      1000
-#define WIFI_COEX_PERSISTENT_LOG_US (60LL * 1000 * 1000)
-#define WIFI_COEX_BUSY_LOG_US       (10LL * 1000 * 1000)
+#define WIFI_COEX_LOG_S        60
 /* Parent poll period while WiFi shares the radio. Everything addressed to the
  * node waits at its parent until the next poll, so this is the latency Matter
  * and the dashboard over Thread see during the window; 1 s keeps them usable
@@ -794,8 +792,7 @@ static tcp_usage_t wifi_coex_tcp_usage(void)
     return u;
 }
 
-/* Returns the number of SoftAP clients (-1 when the AP is not up). */
-static int wifi_coex_log_link(const char *phase)
+static void wifi_coex_log_link(const char *phase)
 {
     wifi_ap_record_t ap = { 0 };
     wifi_sta_list_t clients = { 0 };
@@ -811,12 +808,6 @@ static int wifi_coex_log_link(const char *phase)
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT),
              tcp.active, tcp.time_wait, tcp.queued, tcp.refused);
-    /* The driver's own count of RX/TX buffers in use, to tell its share of
-     * the heap apart from lwIP's. */
-    if (ap_up && clients.num > 0) esp_wifi_statis_dump(WIFI_STATIS_BUFFER);
-    heap_track_start();
-    heap_track_log();
-    return ap_up ? clients.num : -1;
 }
 
 static void wifi_coex_task(void *arg)
@@ -998,13 +989,12 @@ static void wifi_coex_task(void *arg)
         if (s_coex_persistent) {
             int64_t now = esp_timer_get_time();
             if (now < next_persistent_log_us) continue;
-            int ap_clients = wifi_coex_log_link("always on");
-            next_persistent_log_us = now + (ap_clients > 0 ? WIFI_COEX_BUSY_LOG_US
-                                                            : WIFI_COEX_PERSISTENT_LOG_US);
+            wifi_coex_log_link("always on");
+            next_persistent_log_us = now + WIFI_COEX_LOG_S * 1000000LL;
             continue;
         }
         int left = (int)((s_coex_deadline_us - esp_timer_get_time()) / 1000000);
-        if (left > 0 && left % 10 == 0 && left != last_logged) {
+        if (left > 0 && left % WIFI_COEX_LOG_S == 0 && left != last_logged) {
             last_logged = left;
             char phase[24];
             snprintf(phase, sizeof(phase), "%d s remaining", left);
