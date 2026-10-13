@@ -7,6 +7,12 @@ the update over Matter OTA.
 
 ## 1.6.7 — 2026-09-08
 
+- **WiFi next to Thread: closed HTTP connections no longer hold the heap.**
+  lwIP kept the unsent data of every connection the web server closed and
+  retransmitted it for minutes over the shared radio, so the free heap drained
+  to ~3 kB until the page stopped loading over WiFi and Thread and only a
+  restart helped. A closed connection now gets 1 s to flush, then it is reset
+  and its buffers are freed (`SO_LINGER`).
 - **WiFi next to Thread: smaller TCP send queue per connection.** Each socket
   now queues at most 2 segments (2880 bytes) instead of 4. While WiFi shares
   the radio with Thread the queues drain slowly; with the dashboard and its API
