@@ -7,6 +7,15 @@ the update over Matter OTA.
 
 ## 1.6.7 — 2026-09-08
 
+- **WiFi next to Thread: smaller TCP send queue per connection.** Each socket
+  now queues at most 2 segments (2880 bytes) instead of 4. While WiFi shares
+  the radio with Thread the queues drain slowly; with the dashboard and its API
+  calls open in parallel the copied segments took the heap Matter and the WiFi
+  driver need, so the page stopped half-way (`httpd_sock_err: error in send :
+  11`) and Matter logged `PacketBuffer: pool EMPTY`.
+- The WiFi window log line (`wifi_coex: …`) now also shows the number of SoftAP
+  clients and the lowest free heap since boot, and is logged every 60 s in
+  *Always on* mode as well.
 - **Board temperature (NTC) and overheat protection.** The 1 Mini, 1PM and 2PM
   Gen4 read their onboard NTC (GPIO4, GPIO3 and GPIO4; the 1 Gen4 has none)
   every 10 s. The value is shown on the Hardware tab as *Board temperature
