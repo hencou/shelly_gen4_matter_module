@@ -22,6 +22,7 @@
 #include "sensors.h"
 #include "status_led.h"
 #include "script_engine.h"
+#include "heap_track.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -813,6 +814,8 @@ static int wifi_coex_log_link(const char *phase)
     /* The driver's own count of RX/TX buffers in use, to tell its share of
      * the heap apart from lwIP's. */
     if (ap_up && clients.num > 0) esp_wifi_statis_dump(WIFI_STATIS_BUFFER);
+    heap_track_start();
+    heap_track_log();
     return ap_up ? clients.num : -1;
 }
 

@@ -48,6 +48,8 @@ CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2880
 # Lets httpd bound how long a closed socket keeps its send queue.
 CONFIG_LWIP_SO_LINGER=y
 CONFIG_LWIP_MULTICAST_PING=y
+# heap_track.c attributes the heap to tasks while WiFi runs next to Thread.
+CONFIG_HEAP_USE_HOOKS=y
 CONFIG_LWIP_NETIF_STATUS_CALLBACK=y
 # IPv6 route hook (main/thread_ip6_route.c): Thread multicast/ULA stays on the
 # Thread netif while the WiFi STA is the lwIP default netif.
