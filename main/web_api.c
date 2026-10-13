@@ -1291,9 +1291,10 @@ void web_api_start_httpd(void)
      * several UDP sockets of that, so the listener stays modest. */
     hc.lru_purge_enable   = true;
     /* Each connection can queue TCP_SND_BUF (2880 bytes) of unacked data on
-     * top of the WiFi TX copies; three keep that within the heap left next to
-     * Matter and Thread. LRU purge recycles the oldest for the browser. */
-    hc.max_open_sockets   = 3;
+     * top of the WiFi TX copies and the request scratch buffer; two keep that
+     * within the heap left next to Matter and Thread. The dashboard sends one
+     * request at a time, and LRU purge recycles the oldest socket. */
+    hc.max_open_sockets   = 2;
     hc.max_uri_handlers   = 27;
     ESP_ERROR_CHECK(httpd_start(&srv, &hc));
 
