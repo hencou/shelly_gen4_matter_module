@@ -49,6 +49,8 @@
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 #include "freertos/timers.h"
+#include "lwip/tcpip.h"
+#include "lwip/priv/tcp_priv.h"
 
 static const char *TAG = "ota";
 
@@ -367,6 +369,7 @@ static bool load_sta_credentials(char *ssid, size_t ssidlen,
 #define WIFI_COEX_CONNECT_MS   60000                        /* give up if never up */
 #define WIFI_COEX_TICK_MS      1000
 #define WIFI_COEX_PERSISTENT_LOG_US (60LL * 1000 * 1000)
+#define WIFI_COEX_BUSY_LOG_US       (10LL * 1000 * 1000)
 /* Parent poll period while WiFi shares the radio. Everything addressed to the
  * node waits at its parent until the next poll, so this is the latency Matter
  * and the dashboard over Thread see during the window; 1 s keeps them usable
@@ -771,19 +774,46 @@ static void wifi_coex_shrink_buffers(wifi_init_config_t *cfg)
     cfg->rx_ba_win          = 0;
 }
 
-static void wifi_coex_log_link(const char *phase)
+typedef struct {
+    int active, time_wait;
+    unsigned queued, refused;
+} tcp_usage_t;
+
+static tcp_usage_t wifi_coex_tcp_usage(void)
+{
+    tcp_usage_t u = { 0 };
+    LOCK_TCPIP_CORE();
+    for (struct tcp_pcb *pcb = tcp_active_pcbs; pcb; pcb = pcb->next) {
+        u.active++;
+        if (pcb->snd_buf < TCP_SND_BUF) u.queued += TCP_SND_BUF - pcb->snd_buf;
+        if (pcb->refused_data) u.refused += pcb->refused_data->tot_len;
+    }
+    for (struct tcp_pcb *pcb = tcp_tw_pcbs; pcb; pcb = pcb->next) u.time_wait++;
+    UNLOCK_TCPIP_CORE();
+    return u;
+}
+
+/* Returns the number of SoftAP clients (-1 when the AP is not up). */
+static int wifi_coex_log_link(const char *phase)
 {
     wifi_ap_record_t ap = { 0 };
     wifi_sta_list_t clients = { 0 };
     bool linked = esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
     bool ap_up = esp_wifi_ap_get_sta_list(&clients) == ESP_OK;
+    tcp_usage_t tcp = wifi_coex_tcp_usage();
     ESP_LOGI(TAG, "wifi_coex: %s, sta %s rssi %d ch %d, softap clients %d "
-             "(free heap %u, largest block %u, lowest %u)",
+             "(free heap %u, largest block %u, lowest %u; tcp %d open %d "
+             "time-wait, %u B queued, %u B unread)",
              phase, linked ? "linked" : "not linked", linked ? ap.rssi : 0,
              linked ? ap.primary : 0, ap_up ? clients.num : -1,
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
-             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
+             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT),
+             tcp.active, tcp.time_wait, tcp.queued, tcp.refused);
+    /* The driver's own count of RX/TX buffers in use, to tell its share of
+     * the heap apart from lwIP's. */
+    if (ap_up && clients.num > 0) esp_wifi_statis_dump(WIFI_STATIS_BUFFER);
+    return ap_up ? clients.num : -1;
 }
 
 static void wifi_coex_task(void *arg)
@@ -965,8 +995,9 @@ static void wifi_coex_task(void *arg)
         if (s_coex_persistent) {
             int64_t now = esp_timer_get_time();
             if (now < next_persistent_log_us) continue;
-            next_persistent_log_us = now + WIFI_COEX_PERSISTENT_LOG_US;
-            wifi_coex_log_link("always on");
+            int ap_clients = wifi_coex_log_link("always on");
+            next_persistent_log_us = now + (ap_clients > 0 ? WIFI_COEX_BUSY_LOG_US
+                                                            : WIFI_COEX_PERSISTENT_LOG_US);
             continue;
         }
         int left = (int)((s_coex_deadline_us - esp_timer_get_time()) / 1000000);
