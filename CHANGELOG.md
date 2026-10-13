@@ -7,6 +7,12 @@ the update over Matter OTA.
 
 ## 1.6.7 — 2026-09-08
 
+- **WiFi next to Thread: the WiFi driver no longer takes the whole heap.** With
+  a browser on the SoftAP the driver's per-frame RX/TX buffers (8 + 8 of
+  ~1.6 kB) took more than the ~22 kB a commissioned node has left, so the free
+  heap dropped to ~3 kB, the page stopped loading over WiFi and Thread and Matter
+  logged `PacketBuffer: pool EMPTY`. The WiFi window now uses 4 + 4 dynamic
+  buffers and the web server keeps at most 3 connections open.
 - **WiFi next to Thread: closed HTTP connections no longer hold the heap.**
   lwIP kept the unsent data of every connection the web server closed and
   retransmitted it for minutes over the shared radio, so the free heap drained

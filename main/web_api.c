@@ -1296,7 +1296,10 @@ void web_api_start_httpd(void)
      * 1 s to leave, then reset the connection so its buffers are freed. */
     hc.enable_so_linger   = true;
     hc.linger_timeout     = 1;
-    hc.max_open_sockets   = 4;
+    /* Each connection can queue TCP_SND_BUF (2880 bytes) of unacked data on
+     * top of the WiFi TX copies; three keep that within the heap left next to
+     * Matter and Thread. LRU purge recycles the oldest for the browser. */
+    hc.max_open_sockets   = 3;
     hc.max_uri_handlers   = 27;
     ESP_ERROR_CHECK(httpd_start(&srv, &hc));
 
