@@ -291,6 +291,16 @@ static const char MGMT_HTML[] =
 "</div>"
 
 "<script>"
+/* One request in flight at a time: next to Thread the heap only fits a few
+ * TCP segments, and parallel XHRs exhaust it. */
+"(function(){var q=[],busy=false,send=XMLHttpRequest.prototype.send;"
+"function next(){if(busy||!q.length)return;var it=q.shift();busy=true;"
+"  var done=function(){it.x.removeEventListener('loadend',done);busy=false;next()};"
+"  it.x.addEventListener('loadend',done);"
+"  try{send.call(it.x,it.b)}catch(e){done()}}"
+"XMLHttpRequest.prototype.send=function(b){q.push({x:this,b:b});next()};"
+"window.xhrIdle=function(){return !busy&&!q.length};})();"
+"function pollOk(){return !document.hidden&&xhrIdle()}"
 /* Tab switching */
 "function showTab(n){"
 "  document.querySelectorAll('.tab').forEach(function(t,i){t.className=i==n?'tab act':'tab'});"
@@ -316,7 +326,7 @@ static const char MGMT_HTML[] =
 "}"
 "function startLogTimer(){"
 "  if(!logTimer)logTimer=setInterval(function(){"
-"    if(document.getElementById('log-auto').checked)loadLog();"
+"    if(document.getElementById('log-auto').checked&&pollOk())loadLog();"
 "  },5000);"
 "}"
 "function stopLogTimer(){if(logTimer){clearInterval(logTimer);logTimer=null}}"
@@ -484,7 +494,7 @@ static const char MGMT_HTML[] =
 "  x.open('GET','/api/owprobe');x.send();"
 "}"
 
-"function startHWTimer(){if(!hwTimer)hwTimer=setInterval(loadHW,5000)}"
+"function startHWTimer(){if(!hwTimer)hwTimer=setInterval(function(){if(pollOk())loadHW()},5000)}"
 "function stopHWTimer(){if(hwTimer){clearInterval(hwTimer);hwTimer=null}}"
 "function toggleBench(){"
 "  if(!confirm('Toggle bench mode? Device will restart.'))return;"

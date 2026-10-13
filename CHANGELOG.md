@@ -7,6 +7,14 @@ the update over Matter OTA.
 
 ## 1.6.7 — 2026-09-08
 
+- **WiFi next to Thread: more heap for a SoftAP client.** A per-task heap
+  trace showed no leak: the dashboard's parallel requests and TCP connections
+  (10–17 kB), incoming Thread packets (5–7 kB) and the WiFi driver (3.5 kB)
+  together needed more than the ~17 kB a commissioned node has left with WiFi
+  on. The dashboard now sends one request at a time and skips a poll while a
+  request is pending or the tab is hidden, the web server keeps at most 2
+  connections with a 1 kB request-header buffer, and OpenThread uses 64
+  message buffers instead of 128 (~8 kB more heap).
 - **WiFi next to Thread: the WiFi driver no longer takes the whole heap.** With
   a browser on the SoftAP the driver's per-frame RX/TX buffers (8 + 8 of
   ~1.6 kB) took more than the ~22 kB a commissioned node has left, so the free
