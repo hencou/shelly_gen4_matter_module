@@ -7,13 +7,16 @@ the update over Matter OTA.
 
 ## Unreleased
 
-- **WiFi next to Thread with the Add-on analog input.** The occupancy sampling
-  busy-waited 100 ms out of every 300 ms at priority 5. That froze the CHIP task
-  for 100 ms at a time and halved the CPU left to OpenThread and the web server,
-  so with WiFi on their queues filled the heap (`PacketBuffer: pool EMPTY`,
-  `error in send : 11`) and the dashboard stopped loading over WiFi and Thread.
-  The same 1000 samples are now taken in 10 ms chunks with a tick of sleep in
-  between, at priority 1.
+- The occupancy sampling no longer busy-waits 100 ms out of every 300 ms at
+  priority 5 (which froze the CHIP task for 100 ms at a time). The same 1000
+  samples are now taken in 10 ms chunks with a tick of sleep in between, at
+  priority 1.
+- **WiFi next to Thread with more than one script slot.** Every slot had its
+  own Lua state with the standard libraries, ~9 kB of heap each. With a second
+  slot (e.g. the occupancy sensor next to a switch) a commissioned node had too
+  little heap left for WiFi: the dashboard stopped loading over WiFi and Thread.
+  All slots now share one Lua state, each script in its own `_ENV` table so
+  variables stay per slot; an extra slot costs ~1–3 kB.
 - A missing DS18B20 is logged once instead of every 60 s.
 - SCRIPTS.md: the occupancy example only writes and logs on a state change.
 
