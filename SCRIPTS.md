@@ -248,7 +248,7 @@ example below.
 |---|---|
 | Endpoint Type | Occupancy Sensor |
 | Trigger | Periodic |
-| Period | 1000 (1 second) |
+| Period | 500 (0.5 second) |
 
 The duty cycle threshold (25 % ≈ 2.5 V on a 0–10 V scale) determines
 when the sensor reports "occupied".
