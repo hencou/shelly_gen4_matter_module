@@ -255,12 +255,16 @@ when the sensor reports "occupied".
 
 ```lua
 local threshold = 25
+local last = nil
 
 function run()
   local duty = input.analog()
   local occupied = duty >= threshold
-  endpoint.set("occupied", occupied)
-  log("duty=" .. duty .. "% occupied=" .. tostring(occupied))
+  if occupied ~= last then
+    endpoint.set("occupied", occupied)
+    log("duty=" .. duty .. "% occupied=" .. tostring(occupied))
+    last = occupied
+  end
 end
 ```
 
