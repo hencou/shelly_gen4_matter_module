@@ -32,6 +32,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "esp_heap_caps.h"
 
 #include "lua.h"
@@ -48,11 +49,21 @@ static const char *TAG = "script";
 
 typedef struct {
     script_slot_config_t cfg;
-    lua_State *L;
+    int env_ref;                  /* registry ref of the slot's _ENV table */
+    int chunk_ref;                /* registry ref of the compiled script */
     uint16_t endpoint_id;
     bool active;
     TickType_t last_run;
 } script_slot_t;
+
+/* All slots share one Lua state; each script runs in its own _ENV table that
+ * falls back to the globals, so slots keep separate variables. A state with
+ * the libraries costs ~9 kB of heap, one per slot left a commissioned node
+ * too little for WiFi next to Thread. s_lua_lock serializes the script task
+ * and the web API (which reconfigures slots) on the shared state. */
+static lua_State *s_L = NULL;
+static SemaphoreHandle_t s_lua_lock = NULL;
+static int s_cur_slot = 0;
 
 static script_slot_t s_slots[SCRIPT_MAX_SLOTS];
 static TaskHandle_t s_task = NULL;
@@ -315,10 +326,7 @@ static const luaL_Reg output_lib[] = {
 /* endpoint.set(attr_name, value) — for sensor endpoints */
 static int l_endpoint_set(lua_State *L)
 {
-    /* Slot index stored in registry */
-    lua_getfield(L, LUA_REGISTRYINDEX, "_slot_idx");
-    int slot = (int)lua_tointeger(L, -1);
-    lua_pop(L, 1);
+    int slot = s_cur_slot;
 
     const char *attr = luaL_checkstring(L, 1);
 
@@ -372,9 +380,7 @@ static int l_endpoint_set(lua_State *L)
 /* endpoint.command(cmd, params_table) — for client endpoints */
 static int l_endpoint_command(lua_State *L)
 {
-    lua_getfield(L, LUA_REGISTRYINDEX, "_slot_idx");
-    int slot = (int)lua_tointeger(L, -1);
-    lua_pop(L, 1);
+    int slot = s_cur_slot;
 
     const char *cmd = luaL_checkstring(L, 1);
     uint16_t ep = s_slots[slot].endpoint_id;
@@ -479,16 +485,16 @@ static const luaL_Reg timer_lib[] = {
 
 /* ---------- Lua state setup ---------- */
 
-static lua_State *create_lua_state(uint8_t slot)
+static lua_State *create_lua_state(void)
 {
     lua_State *L = luaL_newstate();
     if (!L) {
-        ESP_LOGE(TAG, "slot %u: failed to create Lua state", slot);
+        ESP_LOGE(TAG, "failed to create Lua state");
         return NULL;
     }
 
     /* Open safe standard libraries (no io, os, loadlib) */
-    luaL_requiref(L, "base", luaopen_base, 1); lua_pop(L, 1);
+    luaL_requiref(L, "_G", luaopen_base, 1); lua_pop(L, 1);
     luaL_requiref(L, "math", luaopen_math, 1); lua_pop(L, 1);
     luaL_requiref(L, "string", luaopen_string, 1); lua_pop(L, 1);
     luaL_requiref(L, "table", luaopen_table, 1); lua_pop(L, 1);
@@ -503,31 +509,79 @@ static lua_State *create_lua_state(uint8_t slot)
     lua_pushcfunction(L, l_log);
     lua_setglobal(L, "log");
 
-    /* Store slot index in registry for API callbacks */
-    lua_pushinteger(L, slot);
-    lua_setfield(L, LUA_REGISTRYINDEX, "_slot_idx");
-
     return L;
 }
 
+static void lua_lock(void)   { xSemaphoreTake(s_lua_lock, portMAX_DELAY); }
+static void lua_unlock(void) { xSemaphoreGive(s_lua_lock); }
+
+/* Caller holds s_lua_lock. Calls the function on top of the stack. */
+static int slot_pcall(uint8_t idx)
+{
+    s_cur_slot = idx;
+    return lua_pcall(s_L, 0, 0, 0);
+}
+
+/* Caller holds s_lua_lock. */
+static void slot_release(script_slot_t *slot)
+{
+    if (s_L) {
+        luaL_unref(s_L, LUA_REGISTRYINDEX, slot->env_ref);
+        luaL_unref(s_L, LUA_REGISTRYINDEX, slot->chunk_ref);
+    }
+    slot->env_ref = LUA_NOREF;
+    slot->chunk_ref = LUA_NOREF;
+    slot->active = false;
+
+    for (int i = 0; i < SCRIPT_MAX_SLOTS; i++) {
+        if (s_slots[i].env_ref != LUA_NOREF) {
+            lua_gc(s_L, LUA_GCCOLLECT);
+            return;
+        }
+    }
+    if (s_L) {
+        lua_close(s_L);
+        s_L = NULL;
+    }
+}
+
+/* Caller holds s_lua_lock. */
 static bool compile_and_load(script_slot_t *slot, uint8_t idx)
 {
-    if (!slot->L) return false;
     if (strlen(slot->cfg.script) == 0) return false;
+    if (!s_L) s_L = create_lua_state();
+    if (!s_L) return false;
 
-    int err = luaL_loadstring(slot->L, slot->cfg.script);
+    char chunkname[12];
+    snprintf(chunkname, sizeof(chunkname), "=slot%u", idx);
+    int err = luaL_loadbufferx(s_L, slot->cfg.script, strlen(slot->cfg.script),
+                               chunkname, "t");
     if (err != LUA_OK) {
-        ESP_LOGE(TAG, "slot %u compile error: %s", idx,
-                 lua_tostring(slot->L, -1));
-        lua_pop(slot->L, 1);
+        ESP_LOGE(TAG, "slot %u compile error: %s", idx, lua_tostring(s_L, -1));
+        lua_pop(s_L, 1);
+        slot_release(slot);
         return false;
     }
+
+    /* _ENV = setmetatable({}, { __index = _G }) */
+    lua_newtable(s_L);
+    lua_newtable(s_L);
+    lua_pushglobaltable(s_L);
+    lua_setfield(s_L, -2, "__index");
+    lua_setmetatable(s_L, -2);
+    lua_pushvalue(s_L, -1);
+    slot->env_ref = luaL_ref(s_L, LUA_REGISTRYINDEX);
+    lua_setupvalue(s_L, -2, 1);
+
+    lua_pushvalue(s_L, -1);
+    slot->chunk_ref = luaL_ref(s_L, LUA_REGISTRYINDEX);
+
     /* Run once to define functions / set up state */
-    err = lua_pcall(slot->L, 0, 0, 0);
+    err = slot_pcall(idx);
     if (err != LUA_OK) {
-        ESP_LOGE(TAG, "slot %u init error: %s", idx,
-                 lua_tostring(slot->L, -1));
-        lua_pop(slot->L, 1);
+        ESP_LOGE(TAG, "slot %u init error: %s", idx, lua_tostring(s_L, -1));
+        lua_pop(s_L, 1);
+        slot_release(slot);
         return false;
     }
     return true;
@@ -541,52 +595,43 @@ static bool slot_start(uint8_t idx)
     if (strlen(slot->cfg.script) == 0) return false;
 
     slot->endpoint_id = matter_get_slot_endpoint(idx);
-    slot->L = create_lua_state(idx);
-    if (slot->L && compile_and_load(slot, idx)) {
-        slot->active = true;
-        return true;
-    }
-    if (slot->L) {
-        lua_close(slot->L);
-        slot->L = NULL;
-    }
-    return false;
+    lua_lock();
+    bool ok = compile_and_load(slot, idx);
+    slot->active = ok;
+    lua_unlock();
+    return ok;
 }
 
 static void slot_stop(uint8_t idx)
 {
-    if (s_slots[idx].L) {
-        lua_close(s_slots[idx].L);
-        s_slots[idx].L = NULL;
-    }
-    s_slots[idx].active = false;
+    lua_lock();
+    slot_release(&s_slots[idx]);
+    lua_unlock();
 }
 
 /* ---------- Script execution ---------- */
 
 static void run_slot_script(script_slot_t *slot, uint8_t idx)
 {
-    if (!slot->active || !slot->L) return;
-    if (strlen(slot->cfg.script) == 0) return;
-
-    /* Push the "run" function if it exists, otherwise re-execute entire script */
-    lua_getglobal(slot->L, "run");
-    if (lua_isfunction(slot->L, -1)) {
-        int err = lua_pcall(slot->L, 0, 0, 0);
-        if (err != LUA_OK) {
-            ESP_LOGW(TAG, "slot %u run() error: %s", idx,
-                     lua_tostring(slot->L, -1));
-            lua_pop(slot->L, 1);
-        }
-    } else {
-        lua_pop(slot->L, 1);
-        /* No run() function — re-execute entire script */
-        if (luaL_dostring(slot->L, slot->cfg.script) != LUA_OK) {
-            ESP_LOGW(TAG, "slot %u exec error: %s", idx,
-                     lua_tostring(slot->L, -1));
-            lua_pop(slot->L, 1);
-        }
+    lua_lock();
+    if (!slot->active || !s_L) {
+        lua_unlock();
+        return;
     }
+
+    /* Call run() if the script defines one, otherwise re-execute the script */
+    lua_rawgeti(s_L, LUA_REGISTRYINDEX, slot->env_ref);
+    lua_getfield(s_L, -1, "run");
+    lua_remove(s_L, -2);
+    if (!lua_isfunction(s_L, -1)) {
+        lua_pop(s_L, 1);
+        lua_rawgeti(s_L, LUA_REGISTRYINDEX, slot->chunk_ref);
+    }
+    if (slot_pcall(idx) != LUA_OK) {
+        ESP_LOGW(TAG, "slot %u run() error: %s", idx, lua_tostring(s_L, -1));
+        lua_pop(s_L, 1);
+    }
+    lua_unlock();
 }
 
 /* ---------- Script engine task ---------- */
@@ -691,6 +736,12 @@ static void script_engine_task(void *arg)
 esp_err_t script_engine_init(void)
 {
     memset(s_slots, 0, sizeof(s_slots));
+    for (int i = 0; i < SCRIPT_MAX_SLOTS; i++) {
+        s_slots[i].env_ref = LUA_NOREF;
+        s_slots[i].chunk_ref = LUA_NOREF;
+    }
+    s_lua_lock = xSemaphoreCreateMutex();
+    if (!s_lua_lock) return ESP_ERR_NO_MEM;
     s_event_queue = xQueueCreate(EVENT_QUEUE_LEN, sizeof(script_event_t));
     if (!s_event_queue) return ESP_ERR_NO_MEM;
     ESP_LOGI(TAG, "script engine initialized");
@@ -724,7 +775,8 @@ esp_err_t script_engine_start(void)
         }
     }
 
-    ESP_LOGI(TAG, "script engine started: %d active slots", active_count);
+    ESP_LOGI(TAG, "script engine started: %d active slots, Lua heap %d B",
+             active_count, s_L ? lua_gc(s_L, LUA_GCCOUNT) * 1024 + lua_gc(s_L, LUA_GCCOUNTB) : 0);
     return ESP_OK;
 }
 
@@ -765,11 +817,7 @@ esp_err_t script_slot_set(uint8_t slot, const script_slot_config_t *cfg)
     if (slot >= SCRIPT_MAX_SLOTS) return ESP_ERR_INVALID_ARG;
 
     /* Stop existing script */
-    if (s_slots[slot].L) {
-        lua_close(s_slots[slot].L);
-        s_slots[slot].L = NULL;
-    }
-    s_slots[slot].active = false;
+    slot_stop(slot);
 
     /* Save config */
     memcpy(&s_slots[slot].cfg, cfg, sizeof(*cfg));
@@ -779,9 +827,7 @@ esp_err_t script_slot_set(uint8_t slot, const script_slot_config_t *cfg)
     /* Start new script if type != NONE. While suspended the runtimes are gone
      * on purpose (heap for the WiFi window); resuming picks the new config up. */
     if (!s_suspended && cfg->type != SLOT_TYPE_NONE && strlen(cfg->script) > 0) {
-        s_slots[slot].L = create_lua_state(slot);
-        if (s_slots[slot].L && compile_and_load(&s_slots[slot], slot)) {
-            s_slots[slot].active = true;
+        if (slot_start(slot)) {
             ESP_LOGI(TAG, "slot %u: script updated and running", slot);
         } else {
             ESP_LOGW(TAG, "slot %u: script compile failed", slot);
@@ -795,11 +841,7 @@ esp_err_t script_slot_clear(uint8_t slot)
 {
     if (slot >= SCRIPT_MAX_SLOTS) return ESP_ERR_INVALID_ARG;
 
-    if (s_slots[slot].L) {
-        lua_close(s_slots[slot].L);
-        s_slots[slot].L = NULL;
-    }
-    s_slots[slot].active = false;
+    slot_stop(slot);
     memset(&s_slots[slot].cfg, 0, sizeof(s_slots[slot].cfg));
 
     /* Erase from NVS */
