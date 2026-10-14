@@ -369,14 +369,19 @@ static void temp_task(void *arg)
              OW_TX, OW_RX, ow_rx_read());
     ow_loopback_probe(NULL, NULL);
 
+    bool failing = false;
     while (1) {
         int16_t centi = 0;
         if (ds18b20_read_locked(&centi)) {
             s_last_temp_centi = centi;
             s_temp_valid = true;
+            failing = false;
             if (s_temp_cb) s_temp_cb(centi);
             ESP_LOGI(TAG, "temp = %d.%02d °C", centi / 100, abs(centi % 100));
-        } else {
+        } else if (!failing) {
+            /* Logged once per failure streak: without a DS18B20 on the Add-on
+             * this would repeat every interval. */
+            failing = true;
             s_temp_valid = false;
             ESP_LOGW(TAG, "DS18B20 read failed: %s (RX level %d)", s_temp_err, ow_rx_read());
             xSemaphoreTake(s_addon_bus, portMAX_DELAY);
@@ -403,13 +408,25 @@ static void temp_task(void *arg)
 static occupancy_cb_t s_occ_cb;
 static analog_cb_t s_analog_cb;
 
+/* The window is sampled in 10 ms chunks with a tick of sleep in between, and
+ * occ_task runs just above idle. Busy-sampling 100 ms in one go at priority 5
+ * took a third of the CPU in blocks that froze the CHIP task (priority 1) and
+ * halved the time left to OpenThread and httpd; with WiFi on next to Thread
+ * their queues then filled the heap (PacketBuffer pool EMPTY, send : 11). */
+#define OCC_CHUNK_US           10000
+
 static int measure_duty_pct(void)
 {
     int high = 0, total = 0;
-    for (int us = 0; us < OCC_SAMPLE_WINDOW_US; us += OCC_SAMPLE_INTERVAL_US) {
-        if (gpio_get_level(PIN_LD2410_INPUT)) high++;
-        total++;
-        esp_rom_delay_us(OCC_SAMPLE_INTERVAL_US);
+    for (int chunk = 0; chunk < OCC_SAMPLE_WINDOW_US; chunk += OCC_CHUNK_US) {
+        xSemaphoreTake(s_addon_bus, portMAX_DELAY);
+        for (int us = 0; us < OCC_CHUNK_US; us += OCC_SAMPLE_INTERVAL_US) {
+            if (gpio_get_level(PIN_LD2410_INPUT)) high++;
+            total++;
+            esp_rom_delay_us(OCC_SAMPLE_INTERVAL_US);
+        }
+        xSemaphoreGive(s_addon_bus);
+        vTaskDelay(1);
     }
     return (high * 100) / total;
 }
@@ -427,9 +444,7 @@ static void occ_task(void *arg)
 
     int last_occ = -1;
     for (;;) {
-        xSemaphoreTake(s_addon_bus, portMAX_DELAY);
         int duty = measure_duty_pct();
-        xSemaphoreGive(s_addon_bus);
         s_last_duty = duty;
         if (s_analog_cb) s_analog_cb((uint8_t)duty);
         int occ  = (duty >= OCC_DUTY_THRESHOLD_PCT) ? 1 : 0;
@@ -491,7 +506,7 @@ void sensors_init(temp_cb_t temp_cb, occupancy_cb_t occ_cb, analog_cb_t analog_c
         }
 
         xTaskCreate(temp_task, "temp_task", 3072, NULL, 5, NULL);
-        xTaskCreate(occ_task,  "occ_task",  2560, NULL, 5, NULL);
+        xTaskCreate(occ_task,  "occ_task",  2560, NULL, tskIDLE_PRIORITY + 1, NULL);
     }
 }
 

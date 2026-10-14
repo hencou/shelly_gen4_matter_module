@@ -5,6 +5,18 @@ every version are on the [Releases page](https://github.com/hencou/shelly_gen4_m
 The Matter `SoftwareVersion` is bumped with every release so controllers offer
 the update over Matter OTA.
 
+## Unreleased
+
+- **WiFi next to Thread with the Add-on analog input.** The occupancy sampling
+  busy-waited 100 ms out of every 300 ms at priority 5. That froze the CHIP task
+  for 100 ms at a time and halved the CPU left to OpenThread and the web server,
+  so with WiFi on their queues filled the heap (`PacketBuffer: pool EMPTY`,
+  `error in send : 11`) and the dashboard stopped loading over WiFi and Thread.
+  The same 1000 samples are now taken in 10 ms chunks with a tick of sleep in
+  between, at priority 1.
+- A missing DS18B20 is logged once instead of every 60 s.
+- SCRIPTS.md: the occupancy example only writes and logs on a state change.
+
 ## 1.6.8 — 2026-10-13
 
 - **WiFi next to Thread: the dashboard loads and Thread stays reachable.** With
