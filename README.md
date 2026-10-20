@@ -1,4 +1,4 @@
-# Shelly Gen4 Matter Module — open-source Matter over Thread firmware for Shelly 1 Gen4, 1 Mini Gen4, 1PM Gen4 and 2PM Gen4
+# Shelly Gen4 Matter Module — open-source Matter over Thread firmware for Shelly 1 Gen4, 1 Mini Gen4, 1PM Gen4, 2PM Gen4 and i4 Gen4
 
 [![Latest release](https://img.shields.io/github/v/release/hencou/shelly_gen4_matter_module?label=release)](https://github.com/hencou/shelly_gen4_matter_module/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -7,12 +7,12 @@
 ![ESP32-C6](https://img.shields.io/badge/ESP32--C6-ESP--IDF%205.5-orange)
 
 Replacement firmware that turns a **Shelly 1 Gen4**, **Shelly 1 Mini Gen4**,
-**Shelly 1PM Gen4** or **Shelly 2PM Gen4** (all ESP32-C6) into a native
+**Shelly 1PM Gen4**, **Shelly 2PM Gen4** or **Shelly i4 Gen4** (all ESP32-C6) into a native
 **Matter over Thread** device: no Shelly app, no cloud account, no WiFi
 required. Works with **Home Assistant**, **Apple Home**, **Google Home** and any
 other Matter 1.6 controller with a Thread border router.
 
-**One firmware image for all four models** — pick the model on the built-in
+**One firmware image for all five models** — pick the model on the built-in
 management page, no separate downloads.
 
 **Highlights**
@@ -73,6 +73,8 @@ types from the management dashboard, without reflashing or re-commissioning:
 | **Occupancy Sensor** | 0x0107 Occupancy Sensor (server) | Analog IN duty cycle, or set from Lua |
 | **Illuminance Sensor** | 0x0106 Light Sensor (server) | Lux value set from Lua |
 | **Contact Sensor** | 0x0015 Contact Sensor (server) | Boolean state set from Lua |
+| **Generic Switch, push button** | 0x000F Generic Switch (server) + OnOff/Level/Color client | Single/double/long press events from `endpoint.event()`, plus bindings via `endpoint.command()` |
+| **Generic Switch, latching** | 0x000F Generic Switch (server) + OnOff/Level/Color client | Fixed switch position (`SwitchLatched`) from `endpoint.event()` |
 | **Electrical Power Measurement** | 0x0510 Electrical Sensor (server) | Voltage/current/power/energy from the BL0942 (1PM) or ADE7953 (2PM), or set from Lua |
 
 ## Based on
@@ -84,7 +86,7 @@ types from the management dashboard, without reflashing or re-commissioning:
 
 ## Target hardware
 
-One firmware image supports four Gen4 models (all ESP32-C6, 8 MB flash). Select
+One firmware image supports five Gen4 models (all ESP32-C6, 8 MB flash). Select
 the model on the management dashboard (**Hardware → Device Type**); the choice is
 stored in NVS and applied on the next boot. The correct GPIO mapping is then used
 for the relay(s), wall-switch input(s), onboard button and status LED.
@@ -95,10 +97,12 @@ for the relay(s), wall-switch input(s), onboard button and status LED.
 | **Shelly 1 Mini Gen4** | GPIO10 | GPIO12 | GPIO22 | GPIO5 | — | — | GPIO4 |
 | **Shelly 1PM Gen4** | GPIO4 | GPIO10 | GPIO1 | GPIO11 | yes (GPIO12) | BL0942 (UART1 GPIO7 + GPIO6, 9600 baud) | GPIO3 |
 | **Shelly 2PM Gen4** | GPIO5 + GPIO3 | GPIO11 + GPIO10 | GPIO12 | GPIO18 | yes (GPIO1) | ADE7953 dual-channel (IRQ=GPIO19, I2C SDA=GPIO6 SCL=GPIO7) | GPIO4 |
+| **Shelly i4 Gen4** | — | GPIO10 + GPIO7 + GPIO6 + GPIO5 (SW1–SW4) | GPIO4 | GPIO11 | not yet supported | — | — |
 
 See [STOCK_GPIO.md](STOCK_GPIO.md) for the evidence per field. The Add-on Analog IN
-(GPIO17) and 1-Wire (GPIO16 in / GPIO9 out) are identical on every model; only
-Digital IN moves.
+(GPIO17) and 1-Wire (GPIO16 in / GPIO9 out) are identical on every Add-on model;
+only Digital IN moves. On the i4 Gen4 the Add-on pins are not established yet, so
+the Add-on is not enabled there.
 
 The polarity is the same on every model: relays are **active-high**, status LEDs
 **active-low**, the onboard button and Add-on Digital IN **active-low** (internal
@@ -211,7 +215,7 @@ python3 tools/make-webui-ota-zip.py --model 1-mini-gen4   # only one model
 
 The firmware inside is the same for every model; only the manifest differs. The
 stock updater installs an unsigned package only when its manifest name is the
-module's own Shelly app code (`S1G4`, `Mini1G4`, `S1PMG4`, `S2PMG4`). A package
+module's own Shelly app code (`S1G4`, `Mini1G4`, `S1PMG4`, `S2PMG4`, `I4G4`). A package
 for another model fails with `Signature verification of manifest for S1G4
 failed`. Verified on a Shelly 1 Gen4 running stock 2.0.1. After the install,
 select the model under **Hardware → Device Type** on the management dashboard.
@@ -517,8 +521,8 @@ factory-fresh stock unit and has to be set up again from scratch.
 | Function | Returns | Description |
 |---|---|---|
 | `input.button_event()` | string or nil | Last button event (see events table below) |
-| `input.button_id()` | integer | Input that triggered the event: `0`=SW, `1`=Digital IN, `2`=PCB button, `3`=SW2 (2PM) |
-| `input.sw()` | boolean | Current state of SW input (GPIO10) |
+| `input.button_id()` | integer | Input that triggered the event: `0`=SW (SW1 on the i4), `1`=Digital IN, `2`=PCB button, `3`=SW2 (2PM / i4), `4`=SW3 (i4), `5`=SW4 (i4) |
+| `input.sw([n])` | boolean or nil | Raw level of SW input (GPIO10), or of switch input `n` (1–4); `nil` when the model has no such input |
 | `input.digital()` | boolean | Current state of Digital IN (GPIO18 on the 1 Gen4) |
 | `input.device_btn()` | boolean | Current state of PCB button (GPIO4) |
 | `input.analog()` | integer | Analog IN duty cycle 0–100 % (GPIO17) |
@@ -589,6 +593,7 @@ The relay functions take an **optional 1-based channel** argument (`1` = relay 1
 | Function | Description |
 |---|---|
 | `endpoint.set(attr, value)` | Set sensor attribute (for server endpoints) |
+| `endpoint.event(evt [, count])` | Forward a button event as Matter Switch events (Generic Switch slots); see [SCRIPTS.md](SCRIPTS.md#11-generic-switch-push-button-events-to-home-assistant--apple-home) |
 | `log(msg)` | Print to serial log |
 | `timer.millis()` | Uptime in milliseconds |
 

@@ -27,6 +27,9 @@ static const struct { const char *model; const char *app; } MODEL_APP[] = {
     { "S4SW-001X16EU", "S1G4"   },   /* Shelly 1 Gen4 */
     { "S4SW-001P16EU", "S1PMG4" },   /* Shelly 1PM Gen4 */
     { "S4SW-002P16EU", "S2PMG4" },   /* Shelly 2PM Gen4 */
+    { "S4SN-0A24X",    "I4G4"   },   /* Shelly i4 Gen4 */
+    { "S4SN-0D24X",    "I4G4"   },   /* Shelly i4 DC Gen4 */
+    { "S4SN-2A24X",    "I4G4"   },   /* Shelly i4 Mini Gen4 */
 };
 
 /* Fallback when the factory model is unknown: the app code for the device type
@@ -38,6 +41,7 @@ static const char *APP_FOR_HW_TYPE[HW_TYPE_COUNT] = {
     [HW_1_MINI_GEN4] = "Mini1G4",
     [HW_1PM_GEN4]    = "S1PMG4",
     [HW_2PM_GEN4]    = "S2PMG4",
+    [HW_I4_GEN4]     = "I4G4",
 };
 
 const char *stock_fw_app_for_model(const char *model)

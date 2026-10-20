@@ -15,6 +15,7 @@ Copy-paste these into the **Scripts** tab of the management dashboard.
 - [8. Multi-input script (different behavior per button)](#8-multi-input-script-different-behavior-per-button)
 - [9. Relay toggle on short press](#9-relay-toggle-on-short-press)
 - [10. LDR control of a relay lamp and a dimmable lamp, manual relay toggle via SW](#10-ldr-control-of-a-relay-lamp-and-a-dimmable-lamp-manual-relay-toggle-via-sw)
+- [11. Generic Switch: push-button events to Home Assistant / Apple Home](#11-generic-switch-push-button-events-to-home-assistant--apple-home)
 
 ---
 
@@ -386,7 +387,11 @@ GPIOs are model-dependent (taken from the active hardware profile); the values b
 | `0` | SW (pushbutton terminal) | GPIO10 |
 | `1` | Digital IN (add-on) | GPIO18 (Add-on models only) |
 | `2` | PCB button (onboard) | GPIO4 |
-| `3` | SW2 (2nd wall switch) | Shelly 2PM Gen4 only (GPIO10) |
+| `3` | SW2 (2nd wall switch) | 2PM Gen4 (GPIO10), i4 Gen4 (GPIO7) |
+| `4` | SW3 | i4 Gen4 only (GPIO6) |
+| `5` | SW4 | i4 Gen4 only (GPIO5) |
+
+On the **i4 Gen4**, SW1 is id `0` (GPIO10).
 
 | Setting | Value |
 |---|---|
@@ -570,6 +575,63 @@ end
 ```
 ---
 
+## 11. Generic Switch: push-button events to Home Assistant / Apple Home
+
+A **Generic Switch** slot sends button *events* (press, release, long press,
+double press) to the controller instead of a state. Home Assistant shows it as
+an `event` entity with single/double/long-press triggers; Apple Home shows a
+programmable switch. Use this for push buttons, e.g. the four inputs of an
+**i4 Gen4**. For a switch with a fixed position (on/off, door contact) the
+**Contact Sensor** slot is still the simpler choice, or use the *latching*
+Generic Switch variant.
+
+The slot also has the OnOff/Level/Color clients and the Binding cluster of the
+toggle slot, so the same script can drive a bound light with
+`endpoint.command()`. Both are optional and independent: leave out
+`endpoint.event()` and it behaves like a toggle slot; leave out the binding and
+it only sends events.
+
+| Setting | Value |
+|---|---|
+| Endpoint Type | Generic Switch, push button |
+| Trigger | On button event |
+
+One slot per input; change `my_input` per slot (i4: `0`, `3`, `4`, `5` for SW1–SW4).
+
+```lua
+local my_input = 0                -- SW1
+
+function run()
+  local evt = input.button_event()
+  if evt == nil or input.button_id() ~= my_input then return end
+  endpoint.event(evt)             -- to HA / Apple Home
+  if evt == "short_press" then    -- and directly to a bound light
+    endpoint.command("toggle")
+  end
+end
+```
+
+`endpoint.event(evt [, count])` maps the `input.button_event()` names to Matter
+Switch events:
+
+| Event | Matter events (push button slot) |
+|---|---|
+| `short_press` | InitialPress → ShortRelease → MultiPressComplete(1) |
+| `double_press` | InitialPress → ShortRelease → InitialPress → MultiPressOngoing(2) → ShortRelease → MultiPressComplete(2) |
+| `long_press_start`, `short_long_start` | InitialPress → LongPress |
+| `long_press_stop`, `short_long_stop` | LongRelease |
+
+`count` overrides the number of presses for `short_press`/`double_press`
+(maximum 2). On a **latching** slot only `contact_closed` / `contact_open` are
+used; they send SwitchLatched with position 1 / 0. Events that do not apply to
+the slot kind (e.g. `contact_closed` on a push-button slot) are ignored and
+return `false`, so a script can pass every event through.
+
+A single press is reported after the double-press window (400 ms), as with the
+other button events.
+
+---
+
 ## Button events reference
 
 | Event string | Description | Typical use |
@@ -595,8 +657,8 @@ end
 
 ### Input
 - `input.button_event()` → string or nil
-- `input.button_id()` → integer (0=SW, 1=Digital IN, 2=PCB, 3=SW2 on 2PM)
-- `input.sw()` → boolean
+- `input.button_id()` → integer (0=SW / i4 SW1, 1=Digital IN, 2=PCB, 3=SW2 on 2PM / i4, 4=SW3 and 5=SW4 on i4)
+- `input.sw([n])` → boolean (raw level of SW, or of switch input `n` = 1–4; `nil` if absent)
 - `input.digital()` → boolean
 - `input.device_btn()` → boolean
 - `input.analog()` → integer (0–100 %)
@@ -632,6 +694,9 @@ Relay functions take an optional 1-based channel (`1`=relay 1, `2`=relay 2 on th
 - `endpoint.set("on_off", bool)` — relay OnOff state
 - `endpoint.set("power", watts)` — Electrical Power Measurement, ActivePower only (W)
 - `endpoint.set("power", { power=, voltage=, current=, frequency= })` — any subset (W / V / A / Hz)
+
+### Endpoint (Generic Switch events)
+- `endpoint.event(evt [, count])` → boolean — forward a button event as Matter Switch events (see section 11)
 
 ### Utilities
 - `log(msg)` — print to serial log

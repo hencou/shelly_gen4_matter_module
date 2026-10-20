@@ -89,8 +89,10 @@ typedef enum {
     INPUT_TOUCH,          /* Add-on digital input (GPIO18): active-low (Add-on pulls
                            * up to 3V3, connecting to GND = pressed) */
     INPUT_DEVICE_BTN,     /* onboard pair button (GPIO4 on 1 Gen4): active-low, pull-up */
-    INPUT_SWITCH_2,       /* 2nd wall-switch input (Shelly 2PM Gen4 only): same
+    INPUT_SWITCH_2,       /* 2nd wall-switch input (2PM / i4 Gen4): same
                            * polarity as INPUT_PUSHBUTTON */
+    INPUT_SWITCH_3,       /* 3rd switch input (i4 Gen4 only) */
+    INPUT_SWITCH_4,       /* 4th switch input (i4 Gen4 only) */
     INPUT_COUNT
 } input_id_t;
 

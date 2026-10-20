@@ -49,6 +49,7 @@ extern "C" {
 
 #include <app/server/Server.h>
 #include <app/clusters/bindings/binding-table.h>
+#include <app/clusters/switch-server/CodegenIntegration.h>
 #include <app/OperationalSessionSetup.h>
 #include <app-common/zap-generated/cluster-objects.h>
 #include <app-common/zap-generated/attributes/Accessors.h>
@@ -1092,6 +1093,46 @@ extern "C" void matter_update_boolean_state(uint16_t endpoint_id, bool state)
                       BooleanState::Attributes::StateValue::Id, &v);
 }
 
+extern "C" esp_err_t matter_switch_event(uint16_t endpoint_id, matter_switch_evt_t evt, uint8_t count)
+{
+    namespace sw = esp_matter::cluster::switch_cluster::event;
+    if (!endpoint_id) return ESP_ERR_INVALID_ARG;
+
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    auto *cl = chip::app::Clusters::Switch::FindClusterOnEndpoint(endpoint_id);
+    if (!cl) {
+        chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+        return ESP_ERR_INVALID_STATE;
+    }
+    switch (evt) {
+    case MATTER_SWITCH_PRESS:
+        for (uint8_t i = 1; i <= count; i++) {
+            (void)cl->SetCurrentPosition(1);
+            sw::send_initial_press(endpoint_id, 1);
+            if (i > 1) sw::send_multi_press_ongoing(endpoint_id, 1, i);
+            (void)cl->SetCurrentPosition(0);
+            sw::send_short_release(endpoint_id, 1);
+        }
+        sw::send_multi_press_complete(endpoint_id, 1, count);
+        break;
+    case MATTER_SWITCH_LONG_START:
+        (void)cl->SetCurrentPosition(1);
+        sw::send_initial_press(endpoint_id, 1);
+        sw::send_long_press(endpoint_id, 1);
+        break;
+    case MATTER_SWITCH_LONG_STOP:
+        (void)cl->SetCurrentPosition(0);
+        sw::send_long_release(endpoint_id, 1);
+        break;
+    case MATTER_SWITCH_LATCH:
+        (void)cl->SetCurrentPosition(count ? 1 : 0);
+        sw::send_switch_latched(endpoint_id, count ? 1 : 0);
+        break;
+    }
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+    return ESP_OK;
+}
+
 /* Write the four ElectricalPowerMeasurement attributes on a given endpoint.
  * Matter units: mW / mV / mA / mHz. These attributes are nullable int64.
  * The ElectricalPowerMeasurement cluster is created dynamically (not in the
@@ -2003,6 +2044,33 @@ static endpoint_t *create_endpoint_for_type(node_t *node, script_slot_type_t typ
                                       ATTRIBUTE_FLAG_NONE, esp_matter_bitmap8(1 /* PIR */));
         return ep;
     }
+    case SLOT_TYPE_GENERIC_SWITCH:
+    case SLOT_TYPE_GENERIC_SWITCH_LATCHING: {
+        /* Generic Switch (Switch server) for button events to controllers, plus
+         * the same OnOff/Level/Color clients + Binding as ONOFF_TOGGLE so the
+         * slot can also drive bound lights directly. */
+        namespace swf = esp_matter::cluster::switch_cluster::feature;
+        esp_matter::endpoint::generic_switch::config_t cfg;
+        if (type == SLOT_TYPE_GENERIC_SWITCH_LATCHING) {
+            cfg.switch_cluster.feature_flags = swf::latching_switch::get_id();
+        } else {
+            cfg.switch_cluster.feature_flags = swf::momentary_switch::get_id() |
+                swf::momentary_switch_release::get_id() |
+                swf::momentary_switch_long_press::get_id() |
+                swf::momentary_switch_multi_press::get_id();
+            cfg.switch_cluster.features.momentary_switch_multi_press.multi_press_max = 2;
+        }
+        endpoint_t *ep = esp_matter::endpoint::generic_switch::create(node, &cfg, ENDPOINT_FLAG_NONE, NULL);
+        if (!ep) return NULL;
+        esp_matter::cluster::on_off::create(ep, NULL, CLUSTER_FLAG_CLIENT);
+        level_control::config_t lvl_cfg;
+        level_control::create(ep, &lvl_cfg, CLUSTER_FLAG_CLIENT);
+        color_control::config_t cc_cfg;
+        color_control::create(ep, &cc_cfg, CLUSTER_FLAG_CLIENT);
+        binding::config_t bind_cfg;
+        binding::create(ep, &bind_cfg, CLUSTER_FLAG_SERVER);
+        return ep;
+    }
     case SLOT_TYPE_RELAY: {
         on_off_light::config_t cfg;
         cfg.on_off.on_off = relay_get_ch(0);
@@ -2088,6 +2156,8 @@ static const char *slot_type_name(script_slot_type_t type)
     case SLOT_TYPE_CONTACT:      return "Contact Sensor (BooleanState)";
     case SLOT_TYPE_ILLUMINANCE:  return "Illuminance Sensor";
     case SLOT_TYPE_POWER:        return "Electrical Power Measurement";
+    case SLOT_TYPE_GENERIC_SWITCH: return "Generic Switch (momentary) + OnOff client";
+    case SLOT_TYPE_GENERIC_SWITCH_LATCHING: return "Generic Switch (latching) + OnOff client";
     default:                     return "Unknown";
     }
 }

@@ -127,6 +127,17 @@ static const char *reset_reason_str(esp_reset_reason_t r)
     }
 }
 
+static void switch_state_str(int gpio, char *out, size_t len)
+{
+    if (gpio < 0) {
+        snprintf(out, len, "N/A");
+        return;
+    }
+    int lvl = gpio_get_level(gpio);
+    snprintf(out, len, "%s (GPIO%d=%d)",
+             (g_bench_mode ? !lvl : lvl) ? "PRESSED" : "RELEASED", gpio, lvl);
+}
+
 static esp_err_t api_hardware_get(httpd_req_t *req)
 {
     static char json[1792];
@@ -267,24 +278,21 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
         snprintf(power_str, sizeof(power_str), "N/A (no power meter)");
     }
 
-    /* Relay + 2nd switch state (2nd channel only present on 2PM). */
+    /* Relay state: 2 channels on the 2PM, none on the i4. */
     char relay_str[48];
-    if (relay_channel_count() >= 2) {
+    if (relay_channel_count() == 0) {
+        snprintf(relay_str, sizeof(relay_str), "N/A (no relay)");
+    } else if (relay_channel_count() >= 2) {
         snprintf(relay_str, sizeof(relay_str), "ch1=%s, ch2=%s",
                  relay_get_ch(0) ? "ON" : "OFF", relay_get_ch(1) ? "ON" : "OFF");
     } else {
         snprintf(relay_str, sizeof(relay_str), "%s", relay_get_ch(0) ? "ON" : "OFF");
     }
 
-    char switch2_str[40];
-    if (hw->switch2_gpio >= 0) {
-        int s2 = gpio_get_level(hw->switch2_gpio);
-        snprintf(switch2_str, sizeof(switch2_str), "%s (GPIO%d=%d)",
-                 (g_bench_mode ? !s2 : s2) ? "PRESSED" : "RELEASED",
-                 hw->switch2_gpio, s2);
-    } else {
-        snprintf(switch2_str, sizeof(switch2_str), "N/A");
-    }
+    char switch2_str[40], switch3_str[40], switch4_str[40];
+    switch_state_str(hw->switch2_gpio, switch2_str, sizeof(switch2_str));
+    switch_state_str(hw->switch3_gpio, switch3_str, sizeof(switch3_str));
+    switch_state_str(hw->switch4_gpio, switch4_str, sizeof(switch4_str));
 
     char wifi_temp_str[48];
     int coex_left = ota_wifi_coex_seconds_left();
@@ -316,6 +324,8 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
         "\"pushbutton\":\"%s (GPIO%d=%d)\","
         "\"pcb_button\":\"%s (GPIO%d=%d)\","
         "\"switch2\":\"%s\","
+        "\"switch3\":\"%s\","
+        "\"switch4\":\"%s\","
         "\"relay\":\"%s\","
         "\"digital_in\":\"%s\","
         "\"analog_in\":\"%s\","
@@ -339,6 +349,8 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
         btn_active ? "PRESSED" : "RELEASED", hw->switch_gpio, btn_level,
         pcb_active ? "PRESSED" : "RELEASED", hw->button_gpio, pcb_level,
         switch2_str,
+        switch3_str,
+        switch4_str,
         relay_str,
         dig_str,
         ana_str,

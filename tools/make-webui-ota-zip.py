@@ -46,12 +46,13 @@ MODELS = {
     "1-mini-gen4": "Mini1G4",
     "1pm-gen4":    "S1PMG4",
     "2pm-gen4":    "S2PMG4",
+    "i4-gen4":     "I4G4",
 }
 PLATFORM     = "esp32c6"
 # Kept above any stock version; the device never refuses it as a downgrade.
 # The real firmware version is in the app and the zip filename, not here.
 MANIFEST_VER = "99.0.0"
-# Must match the stock partition layout (identical on all four models).
+# Must match the stock partition layout (identical on all five models).
 NVS_SIZE = 0xC000
 FS_SIZE  = 0xE0000
 # No flash encryption on these units. Left true because that

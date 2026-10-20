@@ -27,6 +27,7 @@ typedef enum {
     HW_1_MINI_GEN4 = 1,   /* Shelly 1 Mini Gen4 */
     HW_1PM_GEN4    = 2,   /* Shelly 1PM Gen4 (BL0942 power meter) */
     HW_2PM_GEN4    = 3,   /* Shelly Plus 2PM Gen4 (2 relays, ADE7953 dual meter) */
+    HW_I4_GEN4     = 4,   /* Shelly i4 Gen4 (no relay, 4 switch inputs) */
     HW_TYPE_COUNT
 } hw_device_type_t;
 
@@ -40,10 +41,12 @@ typedef enum {
 typedef struct {
     hw_device_type_t type;
     const char *name;        /* human-readable, for dashboard/logs */
-    int relay_gpio;
+    int relay_gpio;          /* -1 = no relay (i4) */
     int relay2_gpio;         /* 2nd relay (-1 = none, e.g. 2PM) */
     int switch_gpio;         /* wall-switch / pushbutton input */
     int switch2_gpio;        /* 2nd wall-switch input (-1 = none) */
+    int switch3_gpio;        /* 3rd switch input (-1 = none, i4 only) */
+    int switch4_gpio;        /* 4th switch input (-1 = none, i4 only) */
     int button_gpio;         /* onboard pair button (active-low) */
     int led_gpio;            /* status LED (-1 = none) */
     bool led_active_high;

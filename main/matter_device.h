@@ -51,6 +51,18 @@ void matter_update_illuminance_ep(uint16_t endpoint_id, float lux);
 /* Set a Contact/BooleanState server endpoint (per-slot endpoint id). */
 void matter_update_boolean_state(uint16_t endpoint_id, bool state);
 
+/* Switch-cluster event sequences on a Generic Switch endpoint. */
+typedef enum {
+    MATTER_SWITCH_PRESS = 0,   /* InitialPress/ShortRelease per press, then MultiPressComplete(count) */
+    MATTER_SWITCH_LONG_START,  /* InitialPress + LongPress */
+    MATTER_SWITCH_LONG_STOP,   /* LongRelease */
+    MATTER_SWITCH_LATCH,       /* SwitchLatched(count = new position 0/1), latching endpoint */
+} matter_switch_evt_t;
+
+/* Emit a Switch event sequence and update CurrentPosition. count = number of
+ * presses (MATTER_SWITCH_PRESS, 1..2) or the new position (MATTER_SWITCH_LATCH). */
+esp_err_t matter_switch_event(uint16_t endpoint_id, matter_switch_evt_t evt, uint8_t count);
+
 /* Update an Electrical Power Measurement endpoint. ch 0 = 1PM/2PM channel A,
  * ch 1 = 2PM channel B. No-op when that endpoint was not created.
  * Units: volts, amperes, watts, hertz — scaled to the Matter mV/mA/mW/mHz

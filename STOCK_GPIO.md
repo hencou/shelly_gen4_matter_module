@@ -20,6 +20,7 @@ https://updates.shelly.cloud/update/<app code>
 | Shelly 1PM Gen4 | `S1PMG4` | 2.0.0 |
 | Shelly Mini 1PM Gen4 | `Mini1PMG4` | 2.0.0 |
 | Shelly 2PM Gen4 | `S2PMG4` | 2.0.0 |
+| Shelly i4 Gen4 | `I4G4` | 2.2.0-beta1 |
 
 
 ## Result
@@ -35,6 +36,26 @@ https://updates.shelly.cloud/update/<app code>
 | Add-on 1-Wire in/out | 16 / 9 | — | 16 / 9 | 16 / 9 |
 | Power meter | — | — | BL0942 UART0, 7 + 6 | ADE7953, IRQ 19 |
 
+
+### Shelly i4 Gen4
+
+The i4 image builds its inputs in one constructor that registers `input:0..3`
+with GPIO10, GPIO7, GPIO6 and GPIO5 (same flags as the wall-switch input of the
+1 Gen4), the onboard button as input 999 on GPIO4 (pull-up, active-low) and the
+`sys_led` on GPIO11. There is no relay output.
+
+| Function | i4 Gen4 |
+|---|---|
+| Relay | — |
+| SW1 / SW2 / SW3 / SW4 | 10 / 7 / 6 / 5 |
+| Onboard button | 4 |
+| Status LED | 11 |
+| Add-on | stock has Add-on (DS18B20/DHT22) code; pins not established, not enabled |
+
+The same image serves the i4 (`S4SN-0A24X`), i4 DC (`S4SN-0D24X`) and i4 Mini
+(`S4SN-2A24X`). No per-model branch was found around the input constructor, so
+the table is expected to hold for all three, but only the i4 values have been
+looked at in detail.
 
 Notes on individual findings:
 
@@ -66,6 +87,7 @@ The stock images embed their own model strings, which is where the mapping in
 | `S4SW-001X16EU` | `S1G4` |
 | `S4SW-001P16EU` | `S1PMG4` |
 | `S4SW-002P16EU` | `S2PMG4` |
+| `S4SN-0A24X` / `S4SN-0D24X` / `S4SN-2A24X` | `I4G4` |
 
 The Mini images carry no model string, so a Mini falls back to the app code for
 the device type selected on the management page (`Mini1G4`).

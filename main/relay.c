@@ -1,5 +1,6 @@
 /*
- * Local relay(s). Single relay on 1/Mini/1PM Gen4; two relays on 2PM Gen4.
+ * Local relay(s). Single relay on 1/Mini/1PM Gen4; two relays on 2PM Gen4;
+ * none on i4 Gen4.
  * GPIOs come from the active hardware profile. State is persisted in NVS per
  * channel for power-outage recovery.
  */
@@ -49,7 +50,11 @@ void relay_init(void)
     const hw_profile_t *hw = hw_profile();
     s_gpio[0] = hw->relay_gpio;
     s_gpio[1] = hw->relay2_gpio;
-    s_count = (hw->relay2_gpio >= 0) ? 2 : 1;
+    s_count = (hw->relay_gpio < 0) ? 0 : (hw->relay2_gpio >= 0) ? 2 : 1;
+    if (s_count == 0) {
+        ESP_LOGI(TAG, "no relay on this model");
+        return;
+    }
 
     uint64_t mask = 0;
     for (int ch = 0; ch < s_count; ch++) {
