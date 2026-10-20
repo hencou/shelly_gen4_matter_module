@@ -5,7 +5,7 @@ every version are on the [Releases page](https://github.com/hencou/shelly_gen4_m
 The Matter `SoftwareVersion` is bumped with every release so controllers offer
 the update over Matter OTA.
 
-## Unreleased
+## 1.6.9 — 2026-10-20
 
 - **Shelly i4 Gen4** as a fifth device type: no relay, four switch inputs
   (SW1–SW4 = GPIO10/7/6/5, `input.button_id()` 0/3/4/5), onboard button GPIO4,
