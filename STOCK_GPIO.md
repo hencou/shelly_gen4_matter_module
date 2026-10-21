@@ -50,7 +50,8 @@ with GPIO10, GPIO7, GPIO6 and GPIO5 (same flags as the wall-switch input of the
 | SW1 / SW2 / SW3 / SW4 | 10 / 7 / 6 / 5 |
 | Onboard button | 4 |
 | Status LED | 11 |
-| Add-on | stock has Add-on (DS18B20/DHT22) code; pins not established, not enabled |
+| Add-on 1-Wire in/out, Analog IN | 16 / 9, 17 (fixed UART0 / boot-strap pins on the J6 header, same layout as the other models) |
+| Add-on Digital IN | not established (J6 pin 1, differs per model) |
 
 The same image serves the i4 (`S4SN-0A24X`), i4 DC (`S4SN-0D24X`) and i4 Mini
 (`S4SN-2A24X`). No per-model branch was found around the input constructor, so

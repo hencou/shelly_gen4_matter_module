@@ -23,8 +23,10 @@
  * moves, so it lives in the profile instead of Kconfig.
  *
  * i4 Gen4: no relay; SW1..SW4 = GPIO10 / GPIO7 / GPIO6 / GPIO5, button GPIO4,
- * status LED GPIO11. Stock carries Add-on code, but the Add-on pins on the i4
- * are not proven yet, so the profile leaves the Add-on off.
+ * status LED GPIO11. The Add-on J6 header has the same layout as on the other
+ * models, so 1-Wire (GPIO16/GPIO9) and Analog IN (GPIO17) are the fixed UART0 /
+ * boot-strap pins of the ESP32-C6. Digital IN (J6 pin 1) differs per model and
+ * is not established for the i4, so it stays off.
  *
  * Not taken from stock: the ADE7953 I2C SDA/SCL pins. Stock reads those from
  * the device configuration in NVS rather than hardcoding them, so they cannot
@@ -99,7 +101,7 @@ static const hw_profile_t s_profiles[HW_TYPE_COUNT] = {
         .switch_gpio = 10, .switch2_gpio = 7,
         .switch3_gpio = 6, .switch4_gpio = 5, .button_gpio = 4,
         .led_gpio = 11, .led_active_high = false,
-        .has_addon = false, .addon_digital_gpio = -1,
+        .has_addon = true, .addon_digital_gpio = -1,
         .has_pm = false, .pm_type = PM_NONE,
         .pm_uart_tx = -1, .pm_uart_rx = -1,
         .pm_i2c_sda = -1, .pm_i2c_scl = -1, .pm_i2c_irq = -1,

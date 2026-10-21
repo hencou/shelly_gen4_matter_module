@@ -249,7 +249,7 @@ static esp_err_t api_hardware_get(httpd_req_t *req)
         snprintf(dig_str, sizeof(dig_str), "%s (GPIO%d=%d)",
                  dig_level ? "HIGH" : "LOW", dig_gpio, dig_level);
     } else {
-        snprintf(dig_str, sizeof(dig_str), "N/A (no Add-on)");
+        snprintf(dig_str, sizeof(dig_str), hw->has_addon ? "N/A (pin unknown on this model)" : "N/A (no Add-on)");
     }
 
     char power_str[200];
