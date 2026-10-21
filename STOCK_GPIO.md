@@ -57,6 +57,12 @@ The same image serves the i4 (`S4SN-0A24X`), i4 DC (`S4SN-0D24X`) and i4 Mini
 the table is expected to hold for all three, but only the i4 values have been
 looked at in detail.
 
+### Shelly 1L Gen4 / 2L Gen4
+
+The relays sit behind an STM32 driven over UART. See [STES.md](STES.md) for
+the pins found so far (SW1 6, SW2 3, button 7, LED 9) and the protocol.
+Not supported by this firmware yet.
+
 Notes on individual findings:
 
 - **Add-on Digital IN is not the same pin on every model.** This firmware drove
