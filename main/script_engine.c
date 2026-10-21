@@ -192,8 +192,21 @@ static int l_input_digital(lua_State *L)
     return 1;
 }
 
+/* input.sw() = SW1; input.sw(n) = raw level of switch input n (1..4). */
 static int l_input_sw(lua_State *L)
 {
+    if (lua_isinteger(L, 1)) {
+        const hw_profile_t *hw = hw_profile();
+        const int gpios[] = { hw->switch_gpio, hw->switch2_gpio,
+                              hw->switch3_gpio, hw->switch4_gpio };
+        lua_Integer n = lua_tointeger(L, 1);
+        if (n < 1 || n > 4 || gpios[n - 1] < 0) {
+            lua_pushnil(L);
+        } else {
+            lua_pushboolean(L, gpio_get_level(gpios[n - 1]));
+        }
+        return 1;
+    }
     lua_pushboolean(L, s_sw_state);
     return 1;
 }
@@ -455,9 +468,53 @@ static int l_endpoint_command(lua_State *L)
     return 0;
 }
 
+/* endpoint.event(evt [, count]) — forward an input.button_event() name as
+ * Switch-cluster events on a Generic Switch slot. Returns true when sent;
+ * events that do not apply to the slot's switch kind return false. */
+static int l_endpoint_event(lua_State *L)
+{
+    int slot = s_cur_slot;
+    const char *evt = luaL_checkstring(L, 1);
+    lua_Integer count = luaL_optinteger(L, 2, 0);
+    uint16_t ep = s_slots[slot].endpoint_id;
+    script_slot_type_t type = s_slots[slot].cfg.type;
+    bool latching = (type == SLOT_TYPE_GENERIC_SWITCH_LATCHING);
+
+    if (type != SLOT_TYPE_GENERIC_SWITCH && !latching) {
+        ESP_LOGW(TAG, "slot %d: endpoint.event needs a Generic Switch slot", slot);
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    matter_switch_evt_t kind;
+    uint8_t n = 1;
+    if (latching) {
+        if (strcmp(evt, "contact_closed") == 0)      { kind = MATTER_SWITCH_LATCH; n = 1; }
+        else if (strcmp(evt, "contact_open") == 0)   { kind = MATTER_SWITCH_LATCH; n = 0; }
+        else { lua_pushboolean(L, false); return 1; }
+    } else if (strcmp(evt, "short_press") == 0 || strcmp(evt, "double_press") == 0) {
+        kind = MATTER_SWITCH_PRESS;
+        n = (count > 0) ? (uint8_t)count : (evt[0] == 'd' ? 2 : 1);
+        if (n > 2) n = 2;
+    } else if (strcmp(evt, "long_press_start") == 0 || strcmp(evt, "short_long_start") == 0) {
+        kind = MATTER_SWITCH_LONG_START;
+    } else if (strcmp(evt, "long_press_stop") == 0 || strcmp(evt, "short_long_stop") == 0) {
+        kind = MATTER_SWITCH_LONG_STOP;
+    } else {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    esp_err_t err = matter_switch_event(ep, kind, n);
+    ESP_LOGI(TAG, "slot %d: event %s (%u) ep=%u -> %d", slot, evt, n, ep, err);
+    lua_pushboolean(L, err == ESP_OK);
+    return 1;
+}
+
 static const luaL_Reg endpoint_lib[] = {
     {"set",     l_endpoint_set},
     {"command", l_endpoint_command},
+    {"event",   l_endpoint_event},
     {NULL, NULL}
 };
 

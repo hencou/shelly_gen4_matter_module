@@ -5,8 +5,18 @@ every version are on the [Releases page](https://github.com/hencou/shelly_gen4_m
 The Matter `SoftwareVersion` is bumped with every release so controllers offer
 the update over Matter OTA.
 
-## Unreleased
+## 1.6.9 — 2026-10-20
 
+- **Shelly i4 Gen4** as a fifth device type: no relay, four switch inputs
+  (SW1–SW4 = GPIO10/7/6/5, `input.button_id()` 0/3/4/5), onboard button GPIO4,
+  status LED GPIO11. Pins from the stock `I4G4` image; the Add-on is not
+  enabled on the i4 yet. Return-to-stock and the web-UI install zip know the
+  `I4G4` app code.
+- **Generic Switch slot types** (push button and latching): a Matter Switch
+  server with the OnOff/Level/Color clients and Binding of the toggle slot.
+  New Lua call `endpoint.event(evt [, count])` forwards `input.button_event()`
+  names as InitialPress/ShortRelease/LongPress/LongRelease/MultiPressComplete
+  or SwitchLatched events. `input.sw(n)` reads switch input 1–4.
 - The occupancy sampling no longer busy-waits 100 ms out of every 300 ms at
   priority 5 (which froze the CHIP task for 100 ms at a time). The same 1000
   samples are now taken in 10 ms chunks with a tick of sleep in between, at

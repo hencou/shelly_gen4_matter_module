@@ -2,9 +2,9 @@
  * Runtime hardware profile selection. See hw_config.h.
  *
  * Pin assignments per device, recovered from the official Shelly stock
- * firmware images (2.0.0, app codes S1G4 / Mini1G4 / S1PMG4 / S2PMG4) by
- * disassembling the peripheral constructors. STOCK_GPIO.md documents how each
- * value was proven.
+ * firmware images (2.0.0, app codes S1G4 / Mini1G4 / S1PMG4 / S2PMG4; i4 Gen4
+ * from I4G4 2.2.0-beta1) by disassembling the peripheral constructors.
+ * STOCK_GPIO.md documents how each value was proven.
  *
  *   Function      | 1 Gen4 | 1 Mini Gen4 | 1PM Gen4              | 2PM Gen4
  *   Relay         | GPIO5  | GPIO10      | GPIO4                | GPIO5 + GPIO3
@@ -21,6 +21,10 @@
  * no 1-Wire/DHT code at all); the other three expose it. Analog IN (GPIO17)
  * and 1-Wire (GPIO16/GPIO9) are the same on every model — only Digital IN
  * moves, so it lives in the profile instead of Kconfig.
+ *
+ * i4 Gen4: no relay; SW1..SW4 = GPIO10 / GPIO7 / GPIO6 / GPIO5, button GPIO4,
+ * status LED GPIO11. Stock carries Add-on code, but the Add-on pins on the i4
+ * are not proven yet, so the profile leaves the Add-on off.
  *
  * Not taken from stock: the ADE7953 I2C SDA/SCL pins. Stock reads those from
  * the device configuration in NVS rather than hardcoding them, so they cannot
@@ -41,6 +45,7 @@ static const hw_profile_t s_profiles[HW_TYPE_COUNT] = {
         .type = HW_1_GEN4, .name = "Shelly 1 Gen4",
         .relay_gpio = 5, .relay2_gpio = -1,
         .switch_gpio = 10, .switch2_gpio = -1, .button_gpio = 4,
+        .switch3_gpio = -1, .switch4_gpio = -1,
         .led_gpio = 15, .led_active_high = false,
         .has_addon = true, .addon_digital_gpio = 18,
         .has_pm = false, .pm_type = PM_NONE,
@@ -52,6 +57,7 @@ static const hw_profile_t s_profiles[HW_TYPE_COUNT] = {
         .type = HW_1_MINI_GEN4, .name = "Shelly 1 Mini Gen4",
         .relay_gpio = 10, .relay2_gpio = -1,
         .switch_gpio = 12, .switch2_gpio = -1, .button_gpio = 22,
+        .switch3_gpio = -1, .switch4_gpio = -1,
         .led_gpio = 5, .led_active_high = false,
         .has_addon = false, .addon_digital_gpio = -1,
         .has_pm = false, .pm_type = PM_NONE,
@@ -63,6 +69,7 @@ static const hw_profile_t s_profiles[HW_TYPE_COUNT] = {
         .type = HW_1PM_GEN4, .name = "Shelly 1PM Gen4",
         .relay_gpio = 4, .relay2_gpio = -1,
         .switch_gpio = 10, .switch2_gpio = -1, .button_gpio = 1,
+        .switch3_gpio = -1, .switch4_gpio = -1,
         .led_gpio = 11, .led_active_high = false,
         .has_addon = true, .addon_digital_gpio = 12,
         .has_pm = true, .pm_type = PM_BL0942,
@@ -78,12 +85,25 @@ static const hw_profile_t s_profiles[HW_TYPE_COUNT] = {
         .type = HW_2PM_GEN4, .name = "Shelly 2PM Gen4",
         .relay_gpio = 5, .relay2_gpio = 3,
         .switch_gpio = 11, .switch2_gpio = 10, .button_gpio = 12,
+        .switch3_gpio = -1, .switch4_gpio = -1,
         .led_gpio = 18, .led_active_high = false,
         .has_addon = true, .addon_digital_gpio = 1,
         .has_pm = true, .pm_type = PM_ADE7953,
         .pm_uart_tx = -1, .pm_uart_rx = -1,
         .pm_i2c_sda = 6, .pm_i2c_scl = 7, .pm_i2c_irq = 19,
         .ntc_gpio = 4,
+    },
+    [HW_I4_GEN4] = {
+        .type = HW_I4_GEN4, .name = "Shelly i4 Gen4",
+        .relay_gpio = -1, .relay2_gpio = -1,
+        .switch_gpio = 10, .switch2_gpio = 7,
+        .switch3_gpio = 6, .switch4_gpio = 5, .button_gpio = 4,
+        .led_gpio = 11, .led_active_high = false,
+        .has_addon = false, .addon_digital_gpio = -1,
+        .has_pm = false, .pm_type = PM_NONE,
+        .pm_uart_tx = -1, .pm_uart_rx = -1,
+        .pm_i2c_sda = -1, .pm_i2c_scl = -1, .pm_i2c_irq = -1,
+        .ntc_gpio = -1,
     },
 };
 
