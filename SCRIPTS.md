@@ -6,7 +6,7 @@ Copy-paste these into the **Scripts** tab of the management dashboard.
 ## Table of contents
 
 - [1. Toggle (short press on/off)](#1-toggle-short-press-onoff)
-- [2. Momentary / manual overrride relay](#2-momentary--manual-overrride-relay)
+- [2. Momentary / manual overrride relay](#2-momentary--manual-override-relay)
 - [3. State-follow switch](#3-state-follow-switch)
 - [4. Full lamp control (toggle, dim, color)](#4-full-lamp-control-toggle-dim-color)
 - [5. Full lamp control with direction toggle](#5-full-lamp-control-with-direction-toggle)
