@@ -40,7 +40,7 @@ end
 
 ---
 
-## 2. Momentary / doordruk relay
+## 2. Momentary / manual override relay
 
 Relay turns on while button is held, turns off when released.
 
