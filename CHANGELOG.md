@@ -5,6 +5,12 @@ every version are on the [Releases page](https://github.com/hencou/shelly_gen4_m
 The Matter `SoftwareVersion` is bumped with every release so controllers offer
 the update over Matter OTA.
 
+## Unreleased
+
+- **i4 Gen4: Add-on enabled** for 1-Wire (DS18B20, GPIO16/GPIO9) and Analog IN
+  (GPIO17). Digital IN stays off until its pin on the i4 is known.
+- README: J6 pin 6 is labelled GPIO0 but is GPIO9 on the ESP32-C6.
+
 ## 1.6.9 — 2026-10-20
 
 - **Shelly i4 Gen4** as a fifth device type: no relay, four switch inputs

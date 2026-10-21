@@ -97,12 +97,12 @@ for the relay(s), wall-switch input(s), onboard button and status LED.
 | **Shelly 1 Mini Gen4** | GPIO10 | GPIO12 | GPIO22 | GPIO5 | — | — | GPIO4 |
 | **Shelly 1PM Gen4** | GPIO4 | GPIO10 | GPIO1 | GPIO11 | yes (GPIO12) | BL0942 (UART1 GPIO7 + GPIO6, 9600 baud) | GPIO3 |
 | **Shelly 2PM Gen4** | GPIO5 + GPIO3 | GPIO11 + GPIO10 | GPIO12 | GPIO18 | yes (GPIO1) | ADE7953 dual-channel (IRQ=GPIO19, I2C SDA=GPIO6 SCL=GPIO7) | GPIO4 |
-| **Shelly i4 Gen4** | — | GPIO10 + GPIO7 + GPIO6 + GPIO5 (SW1–SW4) | GPIO4 | GPIO11 | not yet supported | — | — |
+| **Shelly i4 Gen4** | — | GPIO10 + GPIO7 + GPIO6 + GPIO5 (SW1–SW4) | GPIO4 | GPIO11 | yes (1-Wire + Analog IN; Digital IN not yet) | — | — |
 
 See [STOCK_GPIO.md](STOCK_GPIO.md) for the evidence per field. The Add-on Analog IN
 (GPIO17) and 1-Wire (GPIO16 in / GPIO9 out) are identical on every Add-on model;
-only Digital IN moves. On the i4 Gen4 the Add-on pins are not established yet, so
-the Add-on is not enabled there.
+only Digital IN moves. On the i4 Gen4 the Digital IN pin is not established yet,
+so only 1-Wire and Analog IN are enabled there.
 
 The polarity is the same on every model: relays are **active-high**, status LEDs
 **active-low**, the onboard button and Add-on Digital IN **active-low** (internal
@@ -511,7 +511,7 @@ factory-fresh stock unit and has to be set up again from scratch.
 | 3 | RXD | GPIO17 | Shelly RXD ← CP2102 TXD |
 | 4 | 3.3V | — | power supply (no 5V!) |
 | 5 | RESET | EN | not needed for manual flashing |
-| 6 | GPIO0 (BOOT) | GPIO0 | low at power-up → flash mode |
+| 6 | GPIO0 (BOOT) | GPIO9 | low at power-up → flash mode; labelled GPIO0 by Shelly, but the ESP32-C6 boot strap is GPIO9 (also 1-Wire TX of the Add-on) |
 | 7 | GND | — | pin closest to `J6` silkscreen |
 
 ## Lua scripting API
