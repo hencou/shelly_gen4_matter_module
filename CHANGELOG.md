@@ -10,6 +10,11 @@ the update over Matter OTA.
 - **i4 Gen4: Add-on enabled** for 1-Wire (DS18B20, GPIO16/GPIO9) and Analog IN
   (GPIO17). Digital IN stays off until its pin on the i4 is known.
 - README: J6 pin 6 is labelled GPIO0 but is GPIO9 on the ESP32-C6.
+- **Bound lamp behind another border router.** When resolving a bound peer
+  times out, the module points its DNS client at the next unicast DNS/SRP
+  server in the Thread Network Data and resolves once more. With several
+  border routers (e.g. a Google Nest Hub next to an OpenThread BR) the server
+  the SRP client picked may not answer for a lamp registered at another one.
 
 ## 1.6.9 — 2026-10-20
 
