@@ -79,6 +79,9 @@ extern "C" {
 #if CONFIG_OPENTHREAD_SRP_CLIENT
 #include <openthread/srp_client.h>
 #endif
+#if CONFIG_OPENTHREAD_DNS_CLIENT
+#include <openthread/dns_client.h>
+#endif
 #include <openthread/thread_ftd.h>
 #include "openthread_custom_config.h"
 #if OPENTHREAD_CONFIG_SRP_SERVER_ENABLE
@@ -356,6 +359,86 @@ static void send_colorcontrol_multicast(const BindingCommandData &d, const Bindi
  * the resend, leaving a single command either way. The timeout is therefore set
  * by how long a wall switch may feel unresponsive, not by MRP.
  */
+
+#if CHIP_DEVICE_CONFIG_ENABLE_THREAD && CONFIG_OPENTHREAD_DNS_CLIENT
+/*
+ * A bound peer is resolved through the DNS server the SRP client picked, which
+ * is one of the unicast DNS/SRP servers in the Thread Network Data. With
+ * several border routers that server may not answer for a peer registered at
+ * another border router (it has to find it through LAN mDNS), so discovery
+ * times out although the peer is registered and reachable.
+ *
+ * Point the DNS client at the next unicast DNS/SRP server in the Network Data
+ * (enterprise 44970, service data 0x5d, address in the service or server data).
+ * Returns true when the server changed, i.e. another resolve is worth a try.
+ * The choice holds until the SRP client selects a new server.
+ */
+static bool dns_switch_to_next_server()
+{
+    constexpr uint32_t kThreadEnterpriseNumber = 44970u;
+    constexpr uint8_t  kDnsSrpUnicast          = 0x5d;
+    constexpr uint8_t  kMaxServers             = 8;
+
+    otIp6Address servers[kMaxServers];
+    uint8_t count    = 0;
+    int     current  = -1;
+    int     next     = -1;
+
+    chip::DeviceLayer::ThreadStackMgr().LockThreadStack();
+    otInstance *instance = esp_openthread_get_instance();
+    if (instance != nullptr) {
+        otNetworkDataIterator it = OT_NETWORK_DATA_ITERATOR_INIT;
+        otServiceConfig svc;
+        while (count < kMaxServers && otNetDataGetNextService(instance, &it, &svc) == OT_ERROR_NONE) {
+            if (svc.mEnterpriseNumber != kThreadEnterpriseNumber || svc.mServiceDataLength < 1 ||
+                svc.mServiceData[0] != kDnsSrpUnicast) {
+                continue;
+            }
+            const uint8_t *addr = nullptr;
+            if (svc.mServiceDataLength >= 1 + sizeof(otIp6Address)) {
+                addr = &svc.mServiceData[1];
+            } else if (svc.mServerConfig.mServerDataLength >= sizeof(otIp6Address)) {
+                addr = svc.mServerConfig.mServerData;
+            }
+            if (addr == nullptr) {
+                continue;
+            }
+            otIp6Address a;
+            memcpy(a.mFields.m8, addr, sizeof(a.mFields.m8));
+            bool seen = false;
+            for (uint8_t i = 0; i < count; i++) {
+                seen = seen || otIp6IsAddressEqual(&servers[i], &a);
+            }
+            if (!seen) {
+                servers[count++] = a;
+            }
+        }
+
+        otDnsQueryConfig cfg = *otDnsClientGetDefaultConfig(instance);
+        for (uint8_t i = 0; i < count; i++) {
+            if (otIp6IsAddressEqual(&servers[i], &cfg.mServerSockAddr.mAddress)) {
+                current = i;
+            }
+        }
+        if (count > 1 || (count == 1 && current < 0)) {
+            next = (current + 1) % count;
+            cfg.mServerSockAddr.mAddress = servers[next];
+            otDnsClientSetDefaultConfig(instance, &cfg);
+        }
+    }
+    chip::DeviceLayer::ThreadStackMgr().UnlockThreadStack();
+
+    if (next < 0) {
+        ESP_LOGW(TAG, "DNS: no other DNS/SRP server in the Network Data (%u found)", count);
+        return false;
+    }
+    char str[OT_IP6_ADDRESS_STRING_SIZE];
+    otIp6AddressToString(&servers[next], str, sizeof(str));
+    ESP_LOGW(TAG, "DNS: switched to DNS/SRP server %u of %u: %s", next + 1, count, str);
+    return true;
+}
+#endif
+
 static constexpr uint32_t kInvokeResponseTimeoutMs = 1500;
 
 struct DirectSendCtx {
@@ -367,6 +450,7 @@ struct DirectSendCtx {
     /* Peer activity seen when the command went out; zero if nothing was sent. */
     chip::System::Clock::Timestamp peerActivityAtSend = chip::System::Clock::kZero;
     bool retried = false;
+    bool dnsServerSwitched = false;
 
     DirectSendCtx(const BindingCommandData &d, const Binding::TableEntry &e)
         : cmd(d), entry(e),
@@ -547,7 +631,23 @@ struct DirectSendCtx {
                  peer.GetFabricIndex(),
                  (unsigned long long)peer.GetNodeId(),
                  err.Format());
-        chip::Platform::Delete(static_cast<DirectSendCtx *>(raw));
+        auto *self = static_cast<DirectSendCtx *>(raw);
+#if CHIP_DEVICE_CONFIG_ENABLE_THREAD && CONFIG_OPENTHREAD_DNS_CLIENT
+        /* A discovery timeout usually means the DNS server did not answer for
+         * this peer: ask the next DNS/SRP server once. Deferred like the
+         * invoke retry, since this runs inside a session-setup callback. */
+        if (err == CHIP_ERROR_TIMEOUT && !self->dnsServerSwitched && dns_switch_to_next_server()) {
+            self->dnsServerSwitched = true;
+            ESP_LOGW(TAG, "DirectSend: resolving [%u:0x%llx] again via the next DNS server",
+                     peer.GetFabricIndex(), (unsigned long long)peer.GetNodeId());
+            if (chip::DeviceLayer::PlatformMgr().ScheduleWork(
+                    RetryWorker, reinterpret_cast<intptr_t>(self)) == CHIP_NO_ERROR) {
+                return;
+            }
+            ESP_LOGE(TAG, "DirectSend: cannot schedule the resolve retry");
+        }
+#endif
+        chip::Platform::Delete(self);
     }
 };
 

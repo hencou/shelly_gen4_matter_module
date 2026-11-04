@@ -309,6 +309,13 @@ operational-discovery query a Thread node makes for another node — so a freshl
 reset/commissioned switch times out while resolving the lamp, even though the
 lamp is reachable and works from Home Assistant.
 
+With **several border routers**, the module asks the DNS server its SRP client
+picked. That server may not answer for a lamp registered at another border
+router (it has to find it through LAN mDNS). When resolving a bound peer times
+out, the module switches its DNS client to the next unicast DNS/SRP server in
+the Thread Network Data and resolves once more (log: `DNS: switched to DNS/SRP
+server …`). The new server stays in use until the SRP client picks another one.
+
 The fallback server (**Hardware** tab → *SRP fallback server*, `srp_mode`) runs an
 on-device SRP / DNS-SD server, but only while the mesh has no border router; it
 yields the moment a real one appears, and only one module takes the role
