@@ -50,8 +50,6 @@
 #include "lua.h"
 #include "lauxlib.h"
 
-#include "esp_private/periph_ctrl.h"
-#include "soc/periph_defs.h"
 #include "esp_partition.h"
 #include "mbedtls/base64.h"
 

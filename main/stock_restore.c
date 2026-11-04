@@ -17,7 +17,7 @@
 #include "esp_flash.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
-#include "mbedtls/sha256.h"
+#include "psa/crypto.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -175,16 +175,18 @@ static esp_err_t write_member(httpd_req_t *req, size_t size,
     uint8_t *block = malloc(FS_WRITE_BLOCK);
     if (!block) return ESP_ERR_NO_MEM;
 
-    mbedtls_sha256_context sha;
-    mbedtls_sha256_init(&sha);
-    mbedtls_sha256_starts(&sha, 0);
+    psa_hash_operation_t sha = PSA_HASH_OPERATION_INIT;
+    if (psa_hash_setup(&sha, PSA_ALG_SHA_256) != PSA_SUCCESS) {
+        free(block);
+        return ESP_FAIL;
+    }
 
     esp_err_t err = ESP_OK;
     size_t off = base, remaining = size;
     while (remaining > 0) {
         size_t blk = remaining < FS_WRITE_BLOCK ? remaining : FS_WRITE_BLOCK;
         if ((err = rx_exact(req, block, blk)) != ESP_OK) goto out;
-        mbedtls_sha256_update(&sha, block, blk);
+        if (psa_hash_update(&sha, block, blk) != PSA_SUCCESS) { err = ESP_FAIL; goto out; }
 
         /* Pad the final block up to a 16-byte boundary (flash-encryption
          * requirement); the sector is erased first, so 0xFF padding is fine. */
@@ -206,15 +208,15 @@ static esp_err_t write_member(httpd_req_t *req, size_t size,
         (err = esp_partition_erase_range(part, off, part->size - off)) != ESP_OK)
         goto out;
 
-    uint8_t digest[32]; char hex[65];
-    mbedtls_sha256_finish(&sha, digest);
+    uint8_t digest[32]; char hex[65]; size_t dlen;
+    if (psa_hash_finish(&sha, digest, sizeof(digest), &dlen) != PSA_SUCCESS) { err = ESP_FAIL; goto out; }
     sha_hex(digest, hex);
     if (want_sha[0] && strcasecmp(hex, want_sha) != 0) {
         ESP_LOGE(TAG, "SHA-256 mismatch");
         err = ESP_ERR_INVALID_CRC;
     }
 out:
-    mbedtls_sha256_free(&sha);
+    psa_hash_abort(&sha);
     free(block);
     return err;
 }
@@ -237,8 +239,11 @@ static esp_err_t capture_part(httpd_req_t *req, size_t size, const char *want_sh
     }
 
     if (want_sha[0]) {
-        uint8_t digest[32]; char hex[65];
-        mbedtls_sha256(b, size, digest, 0);
+        uint8_t digest[32]; char hex[65]; size_t dlen;
+        if (psa_hash_compute(PSA_ALG_SHA_256, b, size, digest, sizeof(digest), &dlen) != PSA_SUCCESS) {
+            free(b);
+            return ESP_FAIL;
+        }
         sha_hex(digest, hex);
         if (strcasecmp(hex, want_sha) != 0) {
             ESP_LOGE(TAG, "SHA-256 mismatch on captured part");

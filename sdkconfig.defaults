@@ -56,7 +56,6 @@ CONFIG_MDNS_MULTIPLE_INSTANCE=y
 CONFIG_MBEDTLS_SSL_PROTO_DTLS=y
 CONFIG_MBEDTLS_ECJPAKE_C=y
 CONFIG_MBEDTLS_KEY_EXCHANGE_ECJPAKE=y
-CONFIG_MBEDTLS_HKDF_C=y
 
 # Groups / bindings: every script slot may carry its own group bindings (each
 # group needs a GroupKeySet on this node), so size for 8 endpoints with 4

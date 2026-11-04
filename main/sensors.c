@@ -23,8 +23,8 @@
 #include "esp_rom_sys.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
-#include "esp_private/periph_ctrl.h"
-#include "soc/periph_defs.h"
+#include "esp_private/uart_share_hw_ctrl.h"
+#include "hal/uart_ll.h"
 #include "soc/uart_pins.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -483,19 +483,18 @@ void sensors_init(temp_cb_t temp_cb, occupancy_cb_t occ_cb, analog_cb_t analog_c
     } else {
         /* GPIO16/17 are UART0 TX/RX by default on the ESP32-C6.
          *
-         * The UART0 peripheral clock is enabled twice before we get here:
-         *   1) ESP-IDF console init at boot  (ref_count 0→1)
-         *   2) uart_driver_install below     (ref_count 1→2)
-         * uart_driver_delete only decrements once (2→1), so the clock stays
+         * UART0 is the console UART, so uart_driver_delete leaves its clock
          * on and the UART0 module keeps its internal pull-up active on GPIO17,
-         * making gpio_get_level() always return 1.
-         *
-         * Fix: after the driver teardown, call periph_module_disable() once
-         * more to drain the remaining ref_count from console init and truly
-         * shut off the UART0 clock. */
+         * making gpio_get_level() always return 1. After the driver teardown
+         * switch the UART0 source and bus clock off explicitly. */
         uart_driver_install(UART_NUM_0, 256, 0, 0, NULL, 0);
         uart_driver_delete(UART_NUM_0);
-        periph_module_disable(PERIPH_UART0_MODULE);
+        HP_UART_SRC_CLK_ATOMIC() {
+            uart_ll_sclk_disable(UART_LL_GET_HW(UART_NUM_0));
+        }
+        HP_UART_BUS_CLK_ATOMIC() {
+            uart_ll_enable_bus_clock(UART_NUM_0, false);
+        }
         gpio_reset_pin(PIN_ONEWIRE_RX);    /* GPIO16 — 1-Wire RX / UART0 TX */
         gpio_reset_pin(PIN_LD2410_INPUT);   /* GPIO17 — occupancy / UART0 RX */
 

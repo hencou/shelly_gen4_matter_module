@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Matter 1.6](https://img.shields.io/badge/Matter-1.6-blue)
 ![Thread](https://img.shields.io/badge/Thread-OpenThread-green)
-![ESP32-C6](https://img.shields.io/badge/ESP32--C6-ESP--IDF%205.5-orange)
+![ESP32-C6](https://img.shields.io/badge/ESP32--C6-ESP--IDF%206.0-orange)
 
 Replacement firmware that turns a **Shelly 1 Gen4**, **Shelly 1 Mini Gen4**,
 **Shelly 1PM Gen4**, **Shelly 2PM Gen4** or **Shelly i4 Gen4** (all ESP32-C6) into a native
@@ -79,9 +79,9 @@ types from the management dashboard, without reflashing or re-commissioning:
 
 ## Based on
 
-- [esp-matter](https://github.com/espressif/esp-matter) `release/v1.6` (**Matter 1.6**)
+- [esp-matter](https://github.com/espressif/esp-matter) `release/v1.6.1` (**Matter 1.6**)
 - [connectedhomeip](https://github.com/project-chip/connectedhomeip) (as submodule within esp-matter)
-- ESP-IDF v5.5.5
+- ESP-IDF v6.0.2
 - Lua 5.4 (compiled as component)
 
 ## Target hardware

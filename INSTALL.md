@@ -7,9 +7,9 @@
 
 > For Windows users: use [`INSTALL_VSCODE_WINDOWS.md`](INSTALL_VSCODE_WINDOWS.md) (WSL2 + VS Code is the officially recommended route). Native Windows is not supported by esp-matter.
 
-## 1. ESP-IDF v5.5.5
+## 1. ESP-IDF v6.0.2
 
-esp-matter `release/v1.6` needs **Python 3.11 or newer**: its pinned
+esp-matter `release/v1.6.1` needs **Python 3.11 or newer**: its pinned
 `mobly==1.13` is published as `requires-python: >=3.11`, so on Ubuntu 22.04
 (Python 3.10) the bootstrap fails with a dependency conflict. Install it first
 and point the pigweed bootstrap at it:
@@ -21,7 +21,7 @@ export PW_BOOTSTRAP_PYTHON=/usr/bin/python3.11
 
 ```bash
 mkdir -p ~/esp && cd ~/esp
-git clone --recursive -b v5.5.5 https://github.com/espressif/esp-idf.git
+git clone --recursive -b v6.0.2 https://github.com/espressif/esp-idf.git
 cd esp-idf
 ./install.sh esp32c6
 . ./export.sh           # every new shell session
@@ -31,8 +31,8 @@ cd esp-idf
 
 ```bash
 cd ~/esp
-# release/v1.6 is Matter 1.6 and expects ESP-IDF v5.5.5
-git clone --depth 1 -b release/v1.6 https://github.com/espressif/esp-matter.git
+# release/v1.6.1 is Matter 1.6 and expects ESP-IDF v6.0.2
+git clone --depth 1 -b release/v1.6.1 https://github.com/espressif/esp-matter.git
 cd esp-matter
 git submodule update --init --depth 1
 

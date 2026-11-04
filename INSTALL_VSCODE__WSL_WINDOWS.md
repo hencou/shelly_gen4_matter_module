@@ -92,7 +92,7 @@ sudo apt install -y git wget curl flex bison gperf \
     libreadline-dev libevent-dev pkg-config
 ```
 
-Ubuntu 22.04 ships Python 3.10, but esp-matter `release/v1.6` pins
+Ubuntu 22.04 ships Python 3.10, but esp-matter `release/v1.6.1` pins
 `mobly==1.13`, which is published as `requires-python: >=3.11`. Hence the
 explicit `python3.11` above; step 5 points the bootstrap at it.
 
@@ -109,7 +109,7 @@ Close and reopen the Ubuntu terminal (or `exit` + `wsl`) so the group change tak
 ```bash
 mkdir -p ~/esp
 cd ~/esp
-git clone --recursive -b v5.5.5 https://github.com/espressif/esp-idf.git
+git clone --recursive -b v6.0.2 https://github.com/espressif/esp-idf.git
 
 cd ~/esp/esp-idf
 ./install.sh esp32c6
@@ -120,7 +120,7 @@ idf.py --version
 
 Expected output:
 ```
-ESP-IDF v5.5.5
+ESP-IDF v6.0.2
 ```
 
 Duration: 10-15 minutes.
@@ -135,7 +135,7 @@ ESP-Matter has many submodules via `connectedhomeip`. We use a **stable release 
 cd ~/esp
 source esp-idf/export.sh
 
-git clone --depth 1 -b release/v1.6 https://github.com/espressif/esp-matter.git
+git clone --depth 1 -b release/v1.6.1 https://github.com/espressif/esp-matter.git
 cd esp-matter
 git submodule update --init --depth 1
 ```
