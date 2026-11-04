@@ -5,8 +5,11 @@ every version are on the [Releases page](https://github.com/hencou/shelly_gen4_m
 The Matter `SoftwareVersion` is bumped with every release so controllers offer
 the update over Matter OTA.
 
-## Unreleased
+## 1.7.0 — 2026-11-05
 
+- **Built on ESP-IDF v6.0.2 and esp-matter `release/v1.6.1`** (was v5.5.5 /
+  `release/v1.6`). cJSON now comes from the `espressif/cjson` managed
+  component, since ESP-IDF 6 dropped its built-in `json` component.
 - **i4 Gen4: Add-on enabled** for 1-Wire (DS18B20, GPIO16/GPIO9) and Analog IN
   (GPIO17). Digital IN stays off until its pin on the i4 is known.
 - README: J6 pin 6 is labelled GPIO0 but is GPIO9 on the ESP32-C6.

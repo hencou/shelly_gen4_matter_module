@@ -18,7 +18,7 @@
 #include <string.h>
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -28,7 +28,7 @@ static const char *TAG = "ade7953";
 #define ADE_I2C_PORT   I2C_NUM_0
 #define ADE_I2C_ADDR   0x38          /* 7-bit ADE7953 address */
 #define ADE_I2C_HZ     400000
-#define ADE_IO_TIMEOUT pdMS_TO_TICKS(100)
+#define ADE_IO_TIMEOUT_MS 100
 #define READ_INTERVAL_MS 1000
 
 /* Registers (width implied by address range). */
@@ -50,6 +50,8 @@ static const char *TAG = "ade7953";
 #define ADE_FCLK   223750.0f                      /* period counter clk */
 
 static ade7953_cb_t s_cb;
+static i2c_master_bus_handle_t s_bus;
+static i2c_master_dev_handle_t s_dev;
 static power_meter_reading_t s_last[2];
 static bool s_have[2];
 
@@ -60,9 +62,8 @@ static int64_t s_last_us[2];
 static esp_err_t ade_read(uint16_t reg, uint8_t *data, size_t len)
 {
     uint8_t addr[2] = { (uint8_t)(reg >> 8), (uint8_t)(reg & 0xFF) };
-    return i2c_master_write_read_device(ADE_I2C_PORT, ADE_I2C_ADDR,
-                                        addr, sizeof(addr), data, len,
-                                        ADE_IO_TIMEOUT);
+    return i2c_master_transmit_receive(s_dev, addr, sizeof(addr), data, len,
+                                       ADE_IO_TIMEOUT_MS);
 }
 
 static esp_err_t ade_write(uint16_t reg, const uint8_t *data, size_t len)
@@ -71,8 +72,7 @@ static esp_err_t ade_write(uint16_t reg, const uint8_t *data, size_t len)
     buf[0] = (uint8_t)(reg >> 8);
     buf[1] = (uint8_t)(reg & 0xFF);
     memcpy(&buf[2], data, len);
-    return i2c_master_write_to_device(ADE_I2C_PORT, ADE_I2C_ADDR,
-                                      buf, len + 2, ADE_IO_TIMEOUT);
+    return i2c_master_transmit(s_dev, buf, len + 2, ADE_IO_TIMEOUT_MS);
 }
 
 static bool read_u24(uint16_t reg, uint32_t *out)
@@ -168,22 +168,28 @@ esp_err_t ade7953_init(int sda, int scl, int irq, ade7953_cb_t cb)
     (void)irq;   /* polled mode — IRQ line not used */
     s_cb = cb;
 
-    const i2c_config_t cfg = {
-        .mode = I2C_MODE_MASTER,
+    const i2c_master_bus_config_t bus_cfg = {
+        .i2c_port = ADE_I2C_PORT,
         .sda_io_num = sda,
         .scl_io_num = scl,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = ADE_I2C_HZ,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
     };
-    esp_err_t err = i2c_param_config(ADE_I2C_PORT, &cfg);
+    esp_err_t err = i2c_new_master_bus(&bus_cfg, &s_bus);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "i2c_param_config: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "i2c_new_master_bus: %s", esp_err_to_name(err));
         return err;
     }
-    err = i2c_driver_install(ADE_I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
+    const i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = ADE_I2C_ADDR,
+        .scl_speed_hz = ADE_I2C_HZ,
+    };
+    err = i2c_master_bus_add_device(s_bus, &dev_cfg, &s_dev);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "i2c_driver_install: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "i2c_master_bus_add_device: %s", esp_err_to_name(err));
+        i2c_del_master_bus(s_bus);
         return err;
     }
 
@@ -197,7 +203,8 @@ esp_err_t ade7953_init(int sda, int scl, int irq, ade7953_cb_t cb)
     BaseType_t r = xTaskCreate(ade_task, "ade7953", 3584, NULL, 5, NULL);
     if (r != pdPASS) {
         ESP_LOGE(TAG, "ade_task create failed");
-        i2c_driver_delete(ADE_I2C_PORT);
+        i2c_master_bus_rm_device(s_dev);
+        i2c_del_master_bus(s_bus);
         return ESP_FAIL;
     }
 
