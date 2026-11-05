@@ -38,6 +38,7 @@ extern "C" {
 }
 
 #include <cinttypes>
+#include <psa/crypto.h>
 #include <cmath>
 
 #include <esp_matter.h>
@@ -1908,8 +1909,83 @@ extern "C" void matter_srp_advertise_httpd(void) {}
 extern "C" esp_err_t matter_srp_deregister(uint32_t) { return ESP_ERR_NOT_SUPPORTED; }
 #endif
 
+/* OpenThread keeps the SRP client's ECDSA key in PSA storage since ESP-IDF 6
+ * (OPENTHREAD_CONFIG_PSA_ITS_NVM_OFFSET + KeyRefManager::kEcdsa). If that key
+ * cannot sign, every SRP update fails locally, CHIP's DNS-SD never initializes
+ * and both advertising and peer lookups fail with CHIP_ERROR_INCORRECT_STATE.
+ * Log what PSA does with it, and destroy an unusable key so OpenThread
+ * generates a fresh one on its next SRP update. */
+static constexpr psa_key_id_t kOtSrpKeyId = 0x20007;
+
+static void srp_key_test_scratch(bool persistent, psa_algorithm_t alg, const char *label,
+                                 const uint8_t *hash)
+{
+    psa_key_attributes_t a = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_usage_flags(&a, PSA_KEY_USAGE_SIGN_HASH | PSA_KEY_USAGE_VERIFY_HASH);
+    psa_set_key_algorithm(&a, alg);
+    psa_set_key_type(&a, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+    psa_set_key_bits(&a, 256);
+    if (persistent) {
+        psa_set_key_lifetime(&a, PSA_KEY_LIFETIME_PERSISTENT);
+        psa_set_key_id(&a, 0x2F0F0);
+    }
+    psa_key_id_t id = 0;
+    psa_status_t gen = psa_generate_key(&a, &id);
+    psa_status_t sg  = PSA_ERROR_BAD_STATE;
+    if (gen == PSA_SUCCESS) {
+        uint8_t sig[64];
+        size_t len = 0;
+        sg = psa_sign_hash(id, alg, hash, 32, sig, sizeof(sig), &len);
+        psa_destroy_key(id);
+    }
+    psa_reset_key_attributes(&a);
+    ESP_LOGW(TAG, "SRP key test: scratch %s: generate=%d sign=%d", label, (int)gen, (int)sg);
+}
+
+static void srp_key_selftest(void)
+{
+    static bool done = false;
+    if (done) return;
+    done = true;
+
+    uint8_t hash[32];
+    size_t len = 0;
+    psa_status_t st = psa_hash_compute(PSA_ALG_SHA_256, (const uint8_t *)"srp", 3, hash, sizeof(hash), &len);
+    ESP_LOGW(TAG, "SRP key test: sha256=%d", (int)st);
+    if (st != PSA_SUCCESS) memset(hash, 0x5a, sizeof(hash));
+
+    const psa_algorithm_t det = PSA_ALG_DETERMINISTIC_ECDSA(PSA_ALG_SHA_256);
+    chip::DeviceLayer::ThreadStackMgr().LockThreadStack();
+    psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+    psa_status_t ga = psa_get_key_attributes(kOtSrpKeyId, &attr);
+    if (ga == PSA_SUCCESS) {
+        uint8_t pub[65];
+        uint8_t sig[64];
+        psa_status_t ex = psa_export_public_key(kOtSrpKeyId, pub, sizeof(pub), &len);
+        psa_status_t sg = psa_sign_hash(kOtSrpKeyId, det, hash, sizeof(hash), sig, sizeof(sig), &len);
+        ESP_LOGW(TAG, "SRP key test: OT key 0x%" PRIx32 " type=0x%x bits=%u alg=0x%" PRIx32
+                      " usage=0x%" PRIx32 " lifetime=0x%" PRIx32 " export=%d sign=%d",
+                 (uint32_t)kOtSrpKeyId, (unsigned)psa_get_key_type(&attr), (unsigned)psa_get_key_bits(&attr),
+                 (uint32_t)psa_get_key_algorithm(&attr), (uint32_t)psa_get_key_usage_flags(&attr),
+                 (uint32_t)psa_get_key_lifetime(&attr), (int)ex, (int)sg);
+        if (ex != PSA_SUCCESS || sg != PSA_SUCCESS) {
+            psa_status_t ds = psa_destroy_key(kOtSrpKeyId);
+            ESP_LOGW(TAG, "SRP key test: OT key unusable, destroyed (%d) -- OpenThread generates a new one", (int)ds);
+        }
+    } else {
+        ESP_LOGW(TAG, "SRP key test: no OT key 0x%" PRIx32 " in PSA storage (%d)", (uint32_t)kOtSrpKeyId, (int)ga);
+    }
+    psa_reset_key_attributes(&attr);
+    chip::DeviceLayer::ThreadStackMgr().UnlockThreadStack();
+
+    srp_key_test_scratch(false, det, "volatile det-ECDSA", hash);
+    srp_key_test_scratch(false, PSA_ALG_ECDSA(PSA_ALG_SHA_256), "volatile ECDSA", hash);
+    srp_key_test_scratch(true, det, "persistent det-ECDSA", hash);
+}
+
 extern "C" void matter_thread_addr_log_start(void)
 {
+    srp_key_selftest();
     if (s_addr_log_timer) return;
     const esp_timer_create_args_t args = {
         .callback = [](void *) {
