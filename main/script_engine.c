@@ -437,15 +437,26 @@ static int l_endpoint_command(lua_State *L)
         ESP_LOGI(TAG, "slot %d: command stop ep=%u", slot, ep);
         matter_send_level_stop(ep);
     } else if (strcmp(cmd, "color_temp_set") == 0) {
-        uint16_t kelvin = 2700;
+        lua_Integer kelvin = 2700;
+        lua_Integer mireds = 0;
         if (lua_istable(L, 2)) {
             lua_getfield(L, 2, "kelvin");
-            if (!lua_isnil(L, -1)) kelvin = (uint16_t)lua_tointeger(L, -1);
+            if (!lua_isnil(L, -1)) {
+                kelvin = lua_tointeger(L, -1);
+            } else {
+                lua_getfield(L, 2, "mireds");
+                mireds = lua_tointeger(L, -1);
+                lua_pop(L, 1);
+            }
             lua_pop(L, 1);
         }
-        uint16_t mireds = (uint16_t)(1000000 / kelvin);
-        ESP_LOGI(TAG, "slot %d: command color_temp_set kelvin=%u mireds=%u ep=%u", slot, kelvin, mireds, ep);
-        matter_send_color_temp_set(ep, mireds);
+        if (mireds <= 0)
+            mireds = kelvin > 0 ? (1000000 + kelvin / 2) / kelvin : 370;
+        if (mireds < 1) mireds = 1;
+        if (mireds > 65279) mireds = 65279;
+        ESP_LOGI(TAG, "slot %d: command color_temp_set kelvin=%u mireds=%u ep=%u", slot,
+                 (unsigned)((1000000 + mireds / 2) / mireds), (unsigned)mireds, ep);
+        matter_send_color_temp_set(ep, (uint16_t)mireds);
     } else if (strcmp(cmd, "color_temp_move") == 0) {
         bool warmer = true;
         uint16_t rate = 50;

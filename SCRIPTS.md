@@ -120,7 +120,7 @@ function run()
     endpoint.command("stop")
     log("dim stop")
   elseif evt == "double_press" then
-    endpoint.command("color_temp_set", {mireds=370})
+    endpoint.command("color_temp_set", {kelvin=2700})
     log("reset to 2700K")
   elseif evt == "short_long_start" then
     endpoint.command("color_temp_move", {warmer=true, rate=50})
@@ -171,7 +171,7 @@ function run()
     last_dim_ms = timer.millis()
     log("dim stop, next: " .. (dim_up and "up" or "down"))
   elseif evt == "double_press" then
-    endpoint.command("color_temp_set", {mireds=370})
+    endpoint.command("color_temp_set", {kelvin=2700})
     log("reset to 2700K")
   elseif evt == "short_long_start" then
     endpoint.command("color_temp_move", {warmer=color_warmer, rate=50})
@@ -682,7 +682,8 @@ Relay functions take an optional 1-based channel (`1`=relay 1, `2`=relay 2 on th
   is already off is accepted by the lamp but changes nothing
 - `endpoint.command("move_to_level", {level=N, transition=T})` — N: 1–254, T: 1/10th seconds
 - `endpoint.command("stop")`
-- `endpoint.command("color_temp_set", {mireds=N})`
+- `endpoint.command("color_temp_set", {kelvin=K})` — colour temperature in kelvin;
+  `{mireds=N}` is accepted too, `kelvin` wins when both are given
 - `endpoint.command("color_temp_move", {warmer=bool, rate=N})`
 - `endpoint.command("color_temp_stop")`
 
