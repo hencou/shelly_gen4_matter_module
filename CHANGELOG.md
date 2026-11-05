@@ -22,6 +22,9 @@ the update over Matter OTA.
   Only the UART0 bus clock is switched off at boot; switching its source clock
   off too left the console without a clock after GPIO16/17 were handed back,
   so a log line filling the UART FIFO hung until the watchdog reset the chip.
+- **Lua `color_temp_set` takes `{kelvin=K}`** and now also `{mireds=N}`.
+  SCRIPTS.md documented `mireds`, but only `kelvin` was read, so a `mireds`
+  call always sent the 2700 K (370 mireds) default. The docs now use `kelvin`.
 
 ## 1.6.9 — 2026-10-20
 
