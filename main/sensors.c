@@ -486,12 +486,13 @@ void sensors_init(temp_cb_t temp_cb, occupancy_cb_t occ_cb, analog_cb_t analog_c
          * UART0 is the console UART, so uart_driver_delete leaves its clock
          * on and the UART0 module keeps its internal pull-up active on GPIO17,
          * making gpio_get_level() always return 1. After the driver teardown
-         * switch the UART0 source and bus clock off explicitly. */
+         * switch the UART0 bus clock off explicitly. The source clock stays
+         * on: uart_param_config() does not re-enable it for the console UART,
+         * so sensors_release_uart0() would leave UART0 without a clock and
+         * the first log line that fills its FIFO would hang until the
+         * watchdog resets the chip. */
         uart_driver_install(UART_NUM_0, 256, 0, 0, NULL, 0);
         uart_driver_delete(UART_NUM_0);
-        HP_UART_SRC_CLK_ATOMIC() {
-            uart_ll_sclk_disable(UART_LL_GET_HW(UART_NUM_0));
-        }
         HP_UART_BUS_CLK_ATOMIC() {
             uart_ll_enable_bus_clock(UART_NUM_0, false);
         }

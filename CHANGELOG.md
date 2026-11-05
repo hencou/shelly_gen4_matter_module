@@ -18,6 +18,10 @@ the update over Matter OTA.
   server in the Thread Network Data and resolves once more. With several
   border routers (e.g. a Google Nest Hub next to an OpenThread BR) the server
   the SRP client picked may not answer for a lamp registered at another one.
+- **6x PCB button no longer reboots the module** when the Add-on sensors run.
+  Only the UART0 bus clock is switched off at boot; switching its source clock
+  off too left the console without a clock after GPIO16/17 were handed back,
+  so a log line filling the UART FIFO hung until the watchdog reset the chip.
 
 ## 1.6.9 — 2026-10-20
 
