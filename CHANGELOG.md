@@ -25,6 +25,12 @@ the update over Matter OTA.
 - **Lua `color_temp_set` takes `{kelvin=K}`** and now also `{mireds=N}`.
   SCRIPTS.md documented `mireds`, but only `kelvin` was read, so a `mireds`
   call always sent the 2700 K (370 mireds) default. The docs now use `kelvin`.
+- **SRP key check at boot.** Since ESP-IDF 6 OpenThread keeps the SRP
+  client's signing key in PSA storage. If that key cannot sign, every SRP
+  update fails (`SRP update error: invalid service structure detected`),
+  Matter's DNS-SD never starts and bound lamps fail at once with
+  `CASE failed ...: 3`. The module now logs `SRP key test:` lines and destroys
+  an unusable key, so OpenThread generates a new one on its next SRP update.
 
 ## 1.6.9 — 2026-10-20
 
